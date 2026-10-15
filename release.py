@@ -110,6 +110,12 @@ def bump_version(ver):
 
 def main():
     os.chdir(ROOT)
+    try:
+        subprocess.run(["git", "--version"], stdout=subprocess.DEVNULL,
+                       stderr=subprocess.DEVNULL, check=True)
+    except (FileNotFoundError, subprocess.CalledProcessError):
+        print("[错误] 未找到 git，请先安装 Git for Windows 并确认已加入 PATH。")
+        return 1
     ver = sys.argv[1] if len(sys.argv) > 1 else ""
     if not ver:
         ver = get_version()
@@ -200,13 +206,33 @@ def main():
     return 0
 
 
+def pause_close(prompt):
+    """让窗口停留以便查看结果：优先等待任意键，失败则休眠 5 秒。"""
+    try:
+        import msvcrt
+        sys.stdout.write("\n" + prompt)
+        sys.stdout.flush()
+        msvcrt.getch()
+    except Exception:
+        try:
+            input(prompt)
+        except Exception:
+            time.sleep(5)
+
+
 if __name__ == "__main__":
     rc = 1
     try:
         rc = main()
     except KeyboardInterrupt:
         rc = 0
-    print("")
-    print("窗口将在 5 秒后自动关闭...")
-    time.sleep(5)
+    except Exception:
+        import traceback
+        rc = 1
+        print("")
+        print("[异常] release.py 运行出错，详情如下：")
+        traceback.print_exc()
+        pause_close("按任意键关闭窗口...")
+        sys.exit(rc)
+    pause_close("窗口将在 5 秒后自动关闭...")
     sys.exit(rc)
