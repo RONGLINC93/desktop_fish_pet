@@ -25,9 +25,9 @@ import zipfile
 ROOT = os.path.dirname(os.path.abspath(__file__))
 APP_DIR = os.path.join(ROOT, "app")
 
-# app 内需要排除的（缓存 / 压缩包产物等）
+# app 内需要排除的（缓存 / 运行时个人数据 / 压缩包产物等）
 EXCLUDE_DIRS = {"__pycache__"}
-EXCLUDE_FILES = {".gitignore"}
+EXCLUDE_FILES = {".gitignore", "fish_pet_config.json"}
 
 
 def get_version():
