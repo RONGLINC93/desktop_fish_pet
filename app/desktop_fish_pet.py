@@ -1426,7 +1426,7 @@ class App:
             menu.add_cascade(label="更换炮台", menu=c_menu)
 
         menu.add_separator()
-        menu.add_command(label="再添一条小鱼", command=self.add_fish)
+        menu.add_command(label="放一条小鱼", command=self.add_fish)
         menu.add_command(label="随机放几条鱼", command=self.add_fish_random)
         if len(self.fishes) > 1:
             menu.add_command(label="移除这条鱼", command=lambda: self.remove_fish(fish))
