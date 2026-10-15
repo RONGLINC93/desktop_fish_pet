@@ -2,22 +2,19 @@
 # -*- coding: utf-8 -*-
 """build_win_zip.py - 打包 Windows 发布用 zip
 ===========================================
-把「可运行所需文件」打包成 desktop_fish_pet-win-<版本>.zip，
-排除 git 仓库、Python 缓存、凭据与开发辅助脚本等无关文件。
+只把 app/ 目录（程序本体：主程序 + 启动脚本 + 依赖清单 + 配置 + 鱼素材）
+打包成 desktop_fish_pet-win-<版本>.zip，并附带根目录的 README.md。
+开发辅助脚本（pull.py / push.py / release.py / _gh_release.py 等）与
+凭据、版本源文件都在仓库根目录，不在 app/ 内，因此不会被打进包里。
 版本号取自 version.txt（单行，如 1.0.0）；双击运行即用。
 
-包含在包内的（用户运行所需）：
-    主程序        desktop_fish_pet.py
-    启动脚本      启动小鱼.bat
-    依赖清单      requirements.txt
-    默认配置      fish_pet_config.json
-    使用说明      README.md
-    鱼素材目录    鱼/
-明确排除的（与用户运行无关）：
-    .git / __pycache__ / .env / .env.example / .gitignore
-    version.txt / CHANGELOG.md
-    pull.py / push.py / release.py / _gh_release.py / build_win_zip.py
-    以及任何 .zip 产物
+包内结构（扁平，解压即可运行）：
+    desktop_fish_pet.py
+    启动小鱼.bat
+    requirements.txt
+    fish_pet_config.json
+    README.md
+    鱼/
 """
 import io
 import os
@@ -26,17 +23,11 @@ import time
 import zipfile
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
+APP_DIR = os.path.join(ROOT, "app")
 
-# 需要排除的目录
-EXCLUDE_DIRS = {".git", "__pycache__", "fpk", "build", "dist"}
-
-# 需要排除的文件（凭据 / 版本源 / 开发辅助脚本 / 打包脚本自身）
-EXCLUDE_FILES = {
-    ".env", ".env.example", ".gitignore",
-    "version.txt", "CHANGELOG.md",
-    "pull.py", "push.py", "release.py", "_gh_release.py",
-    "build_win_zip.py",
-}
+# app 内需要排除的（缓存 / 压缩包产物等）
+EXCLUDE_DIRS = {"__pycache__"}
+EXCLUDE_FILES = {".gitignore"}
 
 
 def get_version():
@@ -54,8 +45,9 @@ def build(ver):
         os.remove(out)
     count = 0
     with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as z:
-        for dirpath, dirnames, filenames in os.walk(ROOT):
-            rel = os.path.relpath(dirpath, ROOT)
+        # 1) 打包 app/ 目录的全部内容（扁平化到 zip 根，直接可运行）
+        for dirpath, dirnames, filenames in os.walk(APP_DIR):
+            rel = os.path.relpath(dirpath, APP_DIR)
             parts = rel.split(os.sep)
             if any(p in EXCLUDE_DIRS for p in parts):
                 continue
@@ -66,8 +58,14 @@ def build(ver):
                 full = os.path.join(dirpath, fn)
                 if os.path.abspath(full) == os.path.abspath(out):
                     continue
-                z.write(full, os.path.join(rel, fn))
+                arc = fn if rel == "." else os.path.join(rel, fn)
+                z.write(full, arc)
                 count += 1
+        # 2) 附带根目录的 README.md（如有）
+        readme = os.path.join(ROOT, "README.md")
+        if os.path.exists(readme):
+            z.write(readme, "README.md")
+            count += 1
     size = os.path.getsize(out)
     print("[完成] 已生成：%s" % os.path.basename(out))
     print("        路径：%s" % out)
@@ -88,6 +86,9 @@ def countdown_close(seconds=5):
 
 def main():
     os.chdir(ROOT)
+    if not os.path.isdir(APP_DIR):
+        print("[错误] 未找到 app/ 目录，无法打包")
+        return 1
     ver = get_version()
     print("[信息] 打包 Windows 发布包，版本：%s" % ver)
     build(ver)
