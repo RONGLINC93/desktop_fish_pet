@@ -221,10 +221,11 @@ def pause_close(prompt):
 
 
 def countdown_close(seconds=5):
-    """完成后倒数显示 5 4 3 2 1，然后退出。"""
-    sys.stdout.write("\n")
+    """完成后显示说明并倒数 5 4 3 2 1，然后退出。"""
+    sys.stdout.write("\n窗口将在 %d 秒后自动关闭：" % seconds)
+    sys.stdout.flush()
     for i in range(seconds, 0, -1):
-        sys.stdout.write("%d " % i)
+        sys.stdout.write(" %d" % i)
         sys.stdout.flush()
         time.sleep(1)
     sys.stdout.write("\n")
