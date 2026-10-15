@@ -856,9 +856,12 @@ class FishingOverlay:
         self.cannons = find_cannons()
         self.cannon_index = getattr(app, "cannon_index", 0)
         self.cannon_img = None
+        self.cannon_src = None        # 原始贴图（按等级再缩放）
+        self.cannon_base_w = 150      # Lv1 时的炮台宽度
         self.cannon_barrel_len = 0
+        self._cannon_level_cache = {}  # 等级 -> 缩放后的贴图
         self.muzzle = (self.gun_x, self.gun_y - 60)  # 炮口（子弹出生点）
-        self._cannon_cache = {}                      # (索引, 角度) -> 旋转后的贴图
+        self._cannon_cache = {}                      # (索引, 等级, 角度) -> 旋转后的贴图
         self._load_cannon()
         self.bullet_speed = 1500.0
         self.hud = (12, self.H - 78, 250, 66)  # 左下角信息面板
@@ -919,8 +922,11 @@ class FishingOverlay:
 
     # ---------- 炮台 ----------
     def _load_cannon(self):
-        """加载当前炮台皮肤：统一缩放到同宽，便于 6 个炮台视觉大小一致。"""
+        """加载当前炮台皮肤的原始贴图（实际大小按等级在绘制时再缩放）。"""
         self.cannon_img = None
+        self.cannon_src = None
+        self._cannon_cache = {}
+        self._cannon_level_cache = {}
         if not self.cannons:
             return
         path = self.cannons[self.cannon_index % len(self.cannons)]
@@ -928,12 +934,51 @@ class FishingOverlay:
             im = Image.open(path).convert("RGBA")
         except Exception:
             return
-        target_w = 150
-        im = im.resize((target_w, max(1, int(im.height * target_w / im.width))),
-                       Image.LANCZOS)
-        self.cannon_img = im
-        self.cannon_barrel_len = im.height - 2
-        self._cannon_cache = {}
+        self.cannon_src = im
+
+    def _cannon_level_img(self, lv):
+        """按炮台等级返回缩放后的贴图（等级越高炮台越大），带缓存。"""
+        if self.cannon_src is None:
+            return None
+        img = self._cannon_level_cache.get(lv)
+        if img is None:
+            mult = 1.0 + (lv - 1) * 0.06  # Lv1=1.0 … Lv7≈1.36
+            tw = max(1, int(round(self.cannon_base_w * mult)))
+            th = max(1, int(round(self.cannon_src.height * tw / self.cannon_src.width)))
+            img = self.cannon_src.resize((tw, th), Image.LANCZOS)
+            img = self._decorate_cannon_level(img, lv)
+            self._cannon_level_cache[lv] = img
+        return img
+
+    def _decorate_cannon_level(self, img, lv):
+        """把炮台自带屏幕上的「90000」抹掉，改写当前等级（画进贴图，随炮台一起转）。"""
+        W, H = img.size
+        cx, cy = W * 0.5, H * 0.70
+        hw, hh = W * 0.235, H * 0.115
+        x0, y0, x1, y1 = int(cx - hw), int(cy - hh), int(cx + hw), int(cy + hh)
+        x0, y0 = max(0, x0), max(0, y0)
+        x1, y1 = min(W - 1, x1), min(H - 1, y1)
+        px = img.load()
+        darks = [px[x, y][:3] for x in range(x0, x1 + 1) for y in range(y0, y1 + 1)
+                 if max(px[x, y][:3]) < 130]
+        if darks:
+            n = len(darks)
+            bg = tuple(sorted(c[k] for c in darks)[n // 2] for k in range(3))
+        else:
+            bg = (12, 20, 40)
+        d = ImageDraw.Draw(img)
+        d.rounded_rectangle([x0, y0, x1, y1], radius=max(3, (y1 - y0) // 3), fill=bg)
+        size = max(8, int((y1 - y0) * 0.85))
+        font = load_cjk_font(size)
+        text = "Lv%d" % lv
+        try:
+            bbox = d.textbbox((0, 0), text, font=font)
+            tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
+        except Exception:
+            tw, th, bbox = size * 2, size, (0, 0, 0, 0)
+        d.text((cx - tw / 2 - bbox[0], cy - th / 2 - bbox[1]), text,
+               fill=(0, 225, 255), font=font)
+        return img
 
     def set_cannon(self, idx):
         """切换炮台皮肤并立即重绘。"""
@@ -942,24 +987,28 @@ class FishingOverlay:
         self._render()
 
     def _draw_cannon(self, ang):
-        """在底部中央绘制炮台贴图，随鼠标小幅倾斜，并记录炮口位置。"""
+        """在底部中央绘制炮台贴图（随等级放大、随鼠标倾斜），并记录炮口位置。"""
         gx = self.gun_x
         anchor_y = self.cannon_anchor_y
-        if self.cannon_img is None:  # 无贴图时退回简单圆形基座
+        lv = self.app.cannon_level
+        if self.cannon_src is None:  # 无贴图时退回简单圆形基座
             self.draw.ellipse([gx - 26, anchor_y - 56, gx + 26, anchor_y],
                               fill=(74, 88, 110))
             self.draw.ellipse([gx - 10, anchor_y - 46, gx + 10, anchor_y - 26],
                               fill=(120, 205, 255))
             self.muzzle = (gx, anchor_y - 56)
+            if self.font:
+                self.draw.text((gx - 12, anchor_y - 30), "Lv%d" % lv,
+                               fill=(235, 240, 255), font=self.font)
             return
+        im = self._cannon_level_img(lv)
         # 目标相对“正上方”的偏差 -> 倾斜角（限幅，避免底座倒转）
         rel = ang + math.pi / 2.0
         lim = math.radians(self.cannon_tilt_max)
         tilt = max(-lim, min(lim, rel))
-        key = (self.cannon_index, int(round(math.degrees(tilt))))
+        key = (self.cannon_index, lv, int(round(math.degrees(tilt))))
         item = self._cannon_cache.get(key)
         if item is None:
-            im = self.cannon_img
             pad = int(max(im.width, im.height) * 0.7) + 4
             canvas = Image.new("RGBA", (im.width + pad * 2, im.height + pad * 2), (0, 0, 0, 0))
             canvas.paste(im, (pad, pad))
@@ -970,7 +1019,7 @@ class FishingOverlay:
         rot, pos = item
         self.img.paste(rot, pos, rot)
         # 炮口 = 枢轴 + 旋转后的炮管向量
-        L = self.cannon_barrel_len
+        L = im.height - 2
         self.muzzle = (gx + L * math.sin(tilt), anchor_y - L * math.cos(tilt))
 
     def _render(self):
