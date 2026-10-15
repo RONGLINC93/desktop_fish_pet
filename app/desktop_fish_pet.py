@@ -34,8 +34,13 @@ try:  # winsound 仅 Windows 自带；非 Windows 运行时优雅降级
 except Exception:  # pragma: no cover
     winsound = None
 
+try:  # winreg 用于「开机自启」（写 HKCU Run 项），仅 Windows 有
+    import winreg
+except Exception:  # pragma: no cover
+    winreg = None
+
 import tkinter as tk
-from PIL import Image, ImageChops, ImageDraw
+from PIL import Image, ImageChops, ImageDraw, ImageFont
 from pystray import Icon as TrayIcon, Menu as TrayMenu, MenuItem as TrayItem
 
 # ---------------------------------------------------------------- Win32 准备
@@ -67,6 +72,13 @@ GROWTH_SECONDS_PER_LEVEL = 30.0
 GROWTH_STEP = 0.12
 GROWTH_MAX_FACTOR = 2.0
 GROWTH_MAX_LEVEL = 10
+# 繁殖：达到该等级视为成年「大鱼」，可生小鱼；每条两次生育的冷却与鱼池上限
+MATURE_LEVEL = 6
+BREED_COOLDOWN = 120.0
+MAX_FISH = 15
+# 开机自启：写入 HKCU 的 Run 项（用户级，无需管理员权限）
+RUN_KEY_PATH = r"Software\Microsoft\Windows\CurrentVersion\Run"
+RUN_VALUE_NAME = "DesktopFishPet"
 
       
 class POINT(ctypes.Structure):
@@ -255,6 +267,33 @@ def make_tray_icon():
     return canvas
 
 
+def load_cjk_font(size=14):
+    """加载支持中文的 TrueType 字体（优先微软雅黑），找不到则回退默认字体。
+
+    PIL 默认位图字体不含中文字形，直接用会把中文渲染成「方形带 X」的豆腐块，
+    所以信息卡 / HUD / 浮字统一走这里取一个真正带中文的字体。
+    """
+    windir = os.environ.get("WINDIR", r"C:\Windows")
+    candidates = [
+        os.path.join(windir, "Fonts", "msyh.ttc"),      # 微软雅黑
+        os.path.join(windir, "Fonts", "msyh.ttf"),
+        os.path.join(windir, "Fonts", "simhei.ttf"),    # 黑体
+        os.path.join(windir, "Fonts", "simsun.ttc"),    # 宋体
+        r"C:\Windows\Fonts\msyh.ttc",
+        r"C:\Windows\Fonts\simhei.ttf",
+    ]
+    for p in candidates:
+        try:
+            if os.path.isfile(p):
+                return ImageFont.truetype(p, size)
+        except Exception:
+            continue
+    try:
+        return ImageFont.load_default(size=size)
+    except Exception:
+        return ImageFont.load_default()
+
+
 # ---------------------------------------------------------------- 音效
 class SoundManager:
     """轻量音效管理器：内置合成音（无需素材文件），同时支持用 音效/ 目录下的
@@ -269,6 +308,7 @@ class SoundManager:
         "catch": [(0.09, 520, 740, 0.55, "sine"), (0.12, 740, 1040, 0.55, "sine")],
         "poke":  [(0.10, 600, 720, 0.35, "sine")],
         "levelup": [(0.08, 520, 780, 0.5, "sine"), (0.10, 780, 1040, 0.5, "sine")],
+        "birth": [(0.10, 660, 880, 0.5, "sine"), (0.12, 880, 1180, 0.45, "sine")],
     }
     _SAMPLE_RATE = 44100
 
@@ -359,9 +399,10 @@ def draw_fish_info_card(draw, fish, x, y, font):
     draw.rectangle([x, y, x + cw, y + ch], outline=(120, 160, 220), width=2)
 
     if font:
-        # 第一行：名字 + 等级
+        # 第一行：名字 + 等级（成年标注「·成年」）
         name = getattr(fish, "name", "")
-        draw.text((x + 10, y + 8), "%s  Lv%d" % (name, fish.level),
+        mature = " ·成年" if hasattr(fish, "is_mature") and fish.is_mature() else ""
+        draw.text((x + 10, y + 8), "%s  Lv%d%s" % (name, fish.level, mature),
                   fill=(235, 240, 255), font=font)
         # 第二行：成长进度条
         draw.text((x + 10, y + 30), "成长", fill=(180, 210, 255), font=font)
@@ -408,6 +449,7 @@ class Fish:
         self.max_hp_set = False
         self.berserk = False
         self.berserk_t = 0.0
+        self.breed_timer = BREED_COOLDOWN  # 成年后的生育冷却，加载后先等一轮
 
         self.win = tk.Toplevel(app.root)
         self.win.overrideredirect(True)
@@ -446,6 +488,10 @@ class Fish:
         self.base_speed = 60.0 * (0.5 + self.scale)
         self.frame = 0
         self.anim_t = 0.0
+
+    def is_mature(self):
+        """达到 MATURE_LEVEL 视为成年「大鱼」，可以生小鱼。"""
+        return self.level >= MATURE_LEVEL
 
     # ---------- Win32 图层 ----------
     def _make_dib(self, w, h):
@@ -528,6 +574,13 @@ class Fish:
                 self.app.sounds.play("levelup")
         else:
             self.growth = 1.0
+
+        # 繁殖：成年鱼每隔一段时间在附近生一条小鱼（受鱼池上限约束）
+        if self.is_mature():
+            self.breed_timer -= dt
+            if self.breed_timer <= 0 and len(self.app.fishes) < MAX_FISH:
+                if self.app.breed_fish(self) is not None:
+                    self.breed_timer = BREED_COOLDOWN
 
         anim_speed = 1.0
         if self.dart_t > 0:
@@ -657,7 +710,7 @@ class FishInfoOverlay:
         self.img = Image.new("RGBA", (self.cw, self.ch), (0, 0, 0, 0))
         self.draw = ImageDraw.Draw(self.img)
         try:
-            self.font = ImageDraw.ImageFont.load_default()
+            self.font = load_cjk_font(14)
         except Exception:
             self.font = None
         self.fish = None
@@ -779,11 +832,11 @@ class FishingOverlay:
         self.bullet_speed = 1500.0
         self.hud = (12, self.H - 78, 250, 66)  # 左下角信息面板
         try:
-            self.font = ImageDraw.ImageFont.load_default()
+            self.font = load_cjk_font(14)
         except Exception:
             self.font = None
         try:
-            self.big_font = ImageDraw.ImageFont.load_default(size=30)
+            self.big_font = load_cjk_font(22)
         except Exception:
             self.big_font = self.font
 
@@ -1211,6 +1264,7 @@ class App:
         self.sound_enabled = True
         self.sounds = SoundManager()
         self.berserk_enabled = True
+        self.autostart_enabled = self.is_autostart_enabled()  # 以注册表现状为准
         self._save_ticks = 0
         L, T, R, B = self.workarea
 
@@ -1330,6 +1384,8 @@ class App:
                      lambda icon, item: self._invoke(self.toggle_fishing)),
             TrayItem(lambda item: "音效：开" if self.sound_enabled else "音效：关",
                      lambda icon, item: self._invoke(self.toggle_sound)),
+            TrayItem(lambda item: "开机自启：开" if self.is_autostart_enabled() else "开机自启：关",
+                     lambda icon, item: self._invoke(self.toggle_autostart)),
             TrayItem(lambda item: "狂暴模式：开" if self.berserk_enabled else "狂暴模式：关",
                      lambda icon, item: self._invoke(self.toggle_berserk)),
             TrayItem("放一条小鱼", lambda icon, item: self._invoke(self.add_fish)),
@@ -1388,6 +1444,61 @@ class App:
         except Exception:
             pass
 
+    # ---------- 开机自启 ----------
+    def _autostart_command(self):
+        """生成写入 Run 项的启动命令：优先用 pythonw 无控制台启动本脚本；
+        打包成 exe（PyInstaller 等）时直接用 exe 自身。"""
+        if getattr(sys, "frozen", False):
+            return '"%s"' % sys.executable
+        pyw = os.path.join(os.path.dirname(sys.executable), "pythonw.exe")
+        if not os.path.isfile(pyw):
+            pyw = sys.executable
+        return '"%s" "%s"' % (pyw, os.path.abspath(__file__))
+
+    def is_autostart_enabled(self):
+        """读取 HKCU Run 项，判断是否已设置开机自启。"""
+        if winreg is None:
+            return False
+        try:
+            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, RUN_KEY_PATH) as k:
+                winreg.QueryValueEx(k, RUN_VALUE_NAME)
+            return True
+        except Exception:
+            return False
+
+    def set_autostart(self, on):
+        """开/关开机自启：写入或删除 HKCU Run 项。返回是否成功。"""
+        if winreg is None:
+            return False
+        try:
+            k = winreg.CreateKey(winreg.HKEY_CURRENT_USER, RUN_KEY_PATH)
+            try:
+                if on:
+                    winreg.SetValueEx(k, RUN_VALUE_NAME, 0, winreg.REG_SZ,
+                                      self._autostart_command())
+                else:
+                    try:
+                        winreg.DeleteValue(k, RUN_VALUE_NAME)
+                    except FileNotFoundError:
+                        pass
+            finally:
+                winreg.CloseKey(k)
+            return True
+        except Exception as e:
+            print("[错误] 设置开机自启失败：%s" % e)
+            return False
+
+    def toggle_autostart(self):
+        on = not self.is_autostart_enabled()
+        if self.set_autostart(on):
+            self.autostart_enabled = on
+            if on:
+                self.sounds.play("poke")  # 开自启时给个反馈
+        try:
+            self.tray.update_menu()
+        except Exception:
+            pass
+
     def toggle_fishing(self):
         if self.fishing:
             self.fishing = False
@@ -1426,6 +1537,8 @@ class App:
             menu.add_cascade(label="更换炮台", menu=c_menu)
 
         menu.add_separator()
+        if fish.is_mature():
+            menu.add_command(label="生一条小鱼", command=lambda: self.breed_fish(fish))
         menu.add_command(label="放一条小鱼", command=self.add_fish)
         menu.add_command(label="随机放几条鱼", command=self.add_fish_random)
         if len(self.fishes) > 1:
@@ -1447,6 +1560,29 @@ class App:
         """一次性随机放 2~5 条鱼（随机品种、随机位置）。"""
         for _ in range(random.randint(2, 5)):
             self.add_fish()
+
+    def breed_fish(self, parent):
+        """成年鱼生一条小鱼：同品种、1 级、很小，出现在父鱼附近。返回新鱼或 None。"""
+        if len(self.fishes) >= MAX_FISH:
+            return None
+        L, T, R, B = self.workarea
+        baby_scale = App.SCALES[0][1]  # 很小
+        w, h = self._species_size(parent.species, baby_scale)
+        cx = parent.x + parent.w / 2 + random.uniform(-90, 90)
+        cy = parent.y + parent.h / 2 + random.uniform(-70, 70)
+        bx = max(L, min(cx - w / 2, R - w))
+        by = max(T, min(cy - h / 2, B - h))
+        baby = Fish(self, parent.species, baby_scale, bx, by, level=1, growth=0.0)
+        self.fishes.append(baby)
+        self.sounds.play("birth")
+        # 捕鱼模式下弹个提示；普通模式有新鱼出现 + 音效作为反馈
+        if self.fishing_overlay is not None:
+            self.fishing_overlay.floaters.append({
+                "x": parent.x + parent.w / 2, "y": parent.y - 22,
+                "text": "生了小鱼!", "t": 0.0, "life": 1.2, "vy": 40,
+                "color": (255, 205, 120)})
+        self.save_config()
+        return baby
 
     def remove_fish(self, fish):
         if fish in self.fishes:
