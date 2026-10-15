@@ -71,14 +71,21 @@ def repo_slug():
     return REPO_DEFAULT
 
 
-def bump_version(ver):
-    """发布成功后把 version.txt 的补丁号 +1（进入下一开发版）。"""
+def next_version(ver):
+    """按补丁号 +1 得到下一开发版版本号；解析失败返回 None。"""
     m = re.match(r"^([0-9]+)\.([0-9]+)\.([0-9]+)", ver)
     if not m:
+        return None
+    ma, mi, pa = m.groups()
+    return "%s.%s.%d" % (ma, mi, int(pa) + 1)
+
+
+def bump_version(ver):
+    """发布成功后把 version.txt 的补丁号 +1（进入下一开发版）。"""
+    nxt = next_version(ver)
+    if not nxt:
         print("[警告] 无法解析版本号 %s，跳过自动递增" % ver)
         return
-    ma, mi, pa = m.groups()
-    nxt = "%s.%s.%d" % (ma, mi, int(pa) + 1)
     with io.open(os.path.join(ROOT, "version.txt"), "w", encoding="utf-8") as f:
         f.write(nxt + "\n")
     print("[完成] version.txt 已自动递增：%s -> %s（下一开发版）" % (ver, nxt))
@@ -108,6 +115,13 @@ def finalize_changelog(ver):
         if pat in text:
             text = text.replace(pat, "## [%s] - %s" % (ver, today), 1)
             print("[完成] CHANGELOG：%s 已标记为发布日期 %s" % (ver, today))
+            # 去掉该版本小节里遗留的「未发布」占位提示行
+            text = _strip_hint_in_section(text, "## [%s] - %s" % (ver, today))
+            # 约定一：发布后在顶部补一个「下一版本 未发布」占位，便于继续记录
+            before = text
+            text = ensure_next_placeholder(ver, text)
+            if text != before:
+                print("[完成] CHANGELOG：已在顶部新增 [%s] 未发布占位" % next_version(ver))
             break
     else:
         # 约定二：[Unreleased] 约定
@@ -142,6 +156,41 @@ def finalize_changelog(ver):
 
     with io.open(p, "w", encoding="utf-8") as f:
         f.write(text)
+
+
+def ensure_next_placeholder(ver, text):
+    """确保 CHANGELOG 顶部有「下一版本 未发布」占位小节；已存在则不重复添加。
+
+    约定一（版本号占位）发布 v1.0.1 后，会在顶部补一个 `## [1.0.2] 未发布`，
+    与 bump_version 递增后的 version.txt 保持一致，方便继续记录下一版变更。
+    """
+    nxt = next_version(ver)
+    if not nxt:
+        return text
+    # 已存在该版本的「未发布」占位则跳过，避免重复
+    if re.search(r"^##\s*\[%s\]\s*(?:-\s*)?未发布" % re.escape(nxt),
+                 text, re.MULTILINE):
+        return text
+    block = ("## [%s] 未发布\n\n"
+             "_开发中，变更将记录于此；发布时本行替换为发布日期。_\n\n" % nxt)
+    p = text.find("## [")
+    if p != -1:
+        head = text[:p].rstrip("\n") + "\n\n"
+        return head + block + text[p:]
+    return text.rstrip("\n") + "\n\n" + block.rstrip("\n") + "\n"
+
+
+def _strip_hint_in_section(text, header):
+    """删除指定版本小节内遗留的「未发布」占位提示行（约定一落成日期后用）。"""
+    hi = text.find(header)
+    if hi == -1:
+        return text
+    nxt = re.search(r"\n##\s", text[hi + len(header):])
+    end = hi + len(header) + nxt.start() if nxt else len(text)
+    seg = text[hi:end]
+    kept = [ln for ln in seg.split("\n") if HINT_MARK not in ln]
+    seg = re.sub(r"\n{3,}", "\n\n", "\n".join(kept))  # 折叠多余空行
+    return text[:hi] + seg + text[end:]
 
 
 def push_version_bump(ver):
