@@ -3,18 +3,106 @@
     {
       "path": "中型鱼\\haima",
       "scale": 0.7,
-      "level": 2,
-      "growth": 0.12,
-      "x": 672,
-      "y": 559
+      "level": 3,
+      "growth": 0.15,
+      "x": 581,
+      "y": 509
     },
     {
       "path": "中型鱼\\dalanjing",
       "scale": 0.7,
-      "level": 2,
-      "growth": 0.12,
-      "x": 2051,
-      "y": 1164
+      "level": 3,
+      "growth": 0.15,
+      "x": 416,
+      "y": 1130
+    },
+    {
+      "path": "中型鱼\\dalansha",
+      "scale": 0.45,
+      "level": 1,
+      "growth": 0.947,
+      "x": 837,
+      "y": 941
+    },
+    {
+      "path": "新版鱼\\zhonghuahou",
+      "scale": 0.45,
+      "level": 1,
+      "growth": 0.947,
+      "x": 1307,
+      "y": 1287
+    },
+    {
+      "path": "新版鱼\\haima",
+      "scale": 0.45,
+      "level": 1,
+      "growth": 0.947,
+      "x": 1525,
+      "y": 361
+    },
+    {
+      "path": "新版鱼\\tianshiyu",
+      "scale": 0.45,
+      "level": 1,
+      "growth": 0.947,
+      "x": 52,
+      "y": 1323
+    },
+    {
+      "path": "中型鱼\\haima",
+      "scale": 0.45,
+      "level": 1,
+      "growth": 0.947,
+      "x": 415,
+      "y": 563
+    },
+    {
+      "path": "中型鱼\\zhonghuahou",
+      "scale": 0.45,
+      "level": 1,
+      "growth": 0.846,
+      "x": 621,
+      "y": 983
+    },
+    {
+      "path": "新版鱼\\tianshiyu",
+      "scale": 0.45,
+      "level": 1,
+      "growth": 0.792,
+      "x": 361,
+      "y": 403
+    },
+    {
+      "path": "新版鱼\\chuitousha",
+      "scale": 0.45,
+      "level": 1,
+      "growth": 0.745,
+      "x": 1716,
+      "y": 36
+    },
+    {
+      "path": "中型鱼\\huangjinsha",
+      "scale": 0.45,
+      "level": 1,
+      "growth": 0.745,
+      "x": 713,
+      "y": 25
+    },
+    {
+      "path": "中型鱼\\dalansha",
+      "scale": 0.45,
+      "level": 1,
+      "growth": 0.745,
+      "x": 456,
+      "y": 372
+    },
+    {
+      "path": "中型鱼\\jianchijing",
+      "scale": 0.45,
+      "level": 1,
+      "growth": 0.745,
+      "x": 648,
+      "y": 656
     }
   ],
   "coins": 0,
