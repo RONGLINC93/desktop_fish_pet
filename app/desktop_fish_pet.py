@@ -864,11 +864,15 @@ class FishingOverlay:
         self._cannon_cache = {}                      # (索引, 等级, 角度) -> 旋转后的贴图
         self._load_cannon()
         self.bullet_speed = 1500.0
-        self.hud = (12, self.H - 78, 250, 66)  # 左下角信息面板
+        self.hud = (12, self.H - 78, 250, 70)  # 信息面板（实际位置在 _draw_hud 里按炮台重算）
         try:
             self.font = load_cjk_font(14)
         except Exception:
             self.font = None
+        try:
+            self.hud_font = load_cjk_font(16)  # HUD 用稍大字号
+        except Exception:
+            self.hud_font = None
         try:
             self.big_font = load_cjk_font(22)
         except Exception:
@@ -1136,6 +1140,14 @@ class FishingOverlay:
                 return f
         return None
 
+    def _hud_text(self, x, y, text, fill, font):
+        """带阴影的 HUD 文字，增加层次感。"""
+        if font:
+            self.draw.text((x + 1, y + 1), text, fill=(0, 0, 0, 170), font=font)
+            self.draw.text((x, y), text, fill=fill, font=font)
+        else:
+            self.draw.text((x, y), text, fill=fill)
+
     def _draw_hud(self):
         lv = self.app.cannon_level
         w, h = self.hud[2], self.hud[3]
@@ -1148,22 +1160,47 @@ class FishingOverlay:
         y0 = max(12, min(y0, self.H - h - 12))
         self.hud = (int(x0), int(y0), int(w), int(h))
         x0, y0, w, h = self.hud
-        # 半透明背景 + 边框
-        self.draw.rectangle([x0, y0, x0 + w, y0 + h], fill=(20, 28, 48, 150))
-        self.draw.rectangle([x0, y0, x0 + w, y0 + h], outline=(120, 160, 220, 220), width=2)
+
+        # 投影
+        try:
+            self.draw.rounded_rectangle([x0 + 3, y0 + 4, x0 + w + 3, y0 + h + 4],
+                                        radius=14, fill=(0, 0, 0, 90))
+        except Exception:
+            pass
+        # 圆角渐变底（半透明）
+        try:
+            mask = Image.new("L", (w, h), 0)
+            ImageDraw.Draw(mask).rounded_rectangle([0, 0, w - 1, h - 1], radius=14, fill=255)
+            grad = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+            gd = ImageDraw.Draw(grad)
+            top = (50, 66, 108, 178)
+            bot = (16, 22, 40, 178)
+            for i in range(h):
+                t = i / max(1, h - 1)
+                col = tuple(int(top[k] + (bot[k] - top[k]) * t) for k in range(4))
+                gd.line([(0, i), (w, i)], fill=col)
+            sub = self.img.crop((x0, y0, x0 + w, y0 + h))
+            sub.paste(grad, (0, 0), mask)
+            self.img.paste(sub, (x0, y0))
+        except Exception:
+            self.draw.rectangle([x0, y0, x0 + w, y0 + h], fill=(20, 28, 48, 150))
+        # 柔和描边 + 左侧高亮条
+        self.draw.rounded_rectangle([x0, y0, x0 + w, y0 + h], radius=14,
+                                    outline=(130, 190, 245, 210), width=2)
+        self.draw.rounded_rectangle([x0 + 7, y0 + 13, x0 + 11, y0 + h - 13], radius=2,
+                                    fill=(110, 205, 255, 210))
+
+        font = getattr(self, "hud_font", None) or self.font
         coins = self.app.coins
-        lines = [
-            "金币：%d" % coins,
-            "炮台 Lv%d  威力x%d" % (lv, lv),
-            "点此面板升级（%d 金币）" % (lv * 200),
+        rows = [
+            ("金币：%d" % coins, (255, 208, 90, 255)),
+            ("炮台 Lv%d  威力x%d" % (lv, lv), (130, 220, 255, 255)),
+            ("点此面板升级（%d 金币）" % (lv * 200), (205, 235, 255, 255)),
         ]
-        ty = y0 + 8
-        for line in lines:       
-            if self.font:
-                self.draw.text((x0 + 12, ty), line, fill=(235, 240, 255), font=self.font)
-            else:
-                self.draw.text((x0 + 12, ty), line, fill=(235, 240, 255))
-            ty += 18
+        ty = y0 + 10
+        for text, col in rows:
+            self._hud_text(x0 + 19, ty, text, col, font)
+            ty += 19
 
     # ---------- 逻辑 ----------
     _FISH_VALUE = {
