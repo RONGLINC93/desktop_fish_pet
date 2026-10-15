@@ -268,6 +268,7 @@ class SoundManager:
         "hit":   [(0.07, 320, 110, 0.55, "square")],
         "catch": [(0.09, 520, 740, 0.55, "sine"), (0.12, 740, 1040, 0.55, "sine")],
         "poke":  [(0.10, 600, 720, 0.35, "sine")],
+        "levelup": [(0.08, 520, 780, 0.5, "sine"), (0.10, 780, 1040, 0.5, "sine")],
     }
     _SAMPLE_RATE = 44100
 
@@ -349,20 +350,49 @@ class SoundManager:
             pass
 
 
+# ---------------------------------------------------------------- 信息卡绘制
+def draw_fish_info_card(draw, fish, x, y, font):
+    """在 (x, y) 处画一张鱼信息卡：名字、等级、成长进度、血条。"""
+    cw, ch = 168, 70
+    # 背景圆角矩形（用普通矩形近似）+ 边框
+    draw.rectangle([x, y, x + cw, y + ch], fill=(20, 28, 48, 235))
+    draw.rectangle([x, y, x + cw, y + ch], outline=(120, 160, 220), width=2)
+
+    if font:
+        # 第一行：名字 + 等级
+        name = getattr(fish, "name", "")
+        draw.text((x + 10, y + 8), "%s  Lv%d" % (name, fish.level),
+                  fill=(235, 240, 255), font=font)
+        # 第二行：成长进度条
+        draw.text((x + 10, y + 30), "成长", fill=(180, 210, 255), font=font)
+        ratio = max(0.0, min(1.0, fish.growth))
+        bx, by, bw, bh = x + 48, y + 31, cw - 58, 8
+        draw.rectangle([bx, by, bx + bw, by + bh], fill=(40, 50, 70))
+        draw.rectangle([bx, by, bx + bw * ratio, by + bh], fill=(120, 220, 140))
+        # 第三行：血条
+        draw.text((x + 10, y + 48), "HP", fill=(255, 150, 150), font=font)
+        hp_ratio = max(0.0, min(1.0, fish.hp / max(1, fish.max_hp)))
+        draw.rectangle([bx, by + 17, bx + bw, by + 17 + bh], fill=(40, 50, 70))
+        draw.rectangle([bx, by + 17, bx + bw * hp_ratio, by + 17 + bh],
+                       fill=(235, 90, 70))
+    return cw, ch
+
+
 # ---------------------------------------------------------------- 小鱼窗口
 class Fish:
     TICK_MS = 33
 
-    def __init__(self, app, species, scale, x, y):
+    def __init__(self, app, species, scale, x, y, level=1, growth=0.0):
         self.app = app
         self.species = species
-        self.scale = scale
+        self.name = species[0]  # find_species 返回的 (显示名, 目录)
+        self.base_scale = scale
+        self.level = max(1, int(level))
+        self.growth = max(0.0, min(1.0, float(growth)))
         self.frame_ms = 90
-        self.right, self.left = species_frames(species[1], scale)
-        w, h = self.right[0][1]
-        self.w, self.h = w, h
+        self._apply_scale()
+        w, h = self.w, self.h
         self.x, self.y = float(x), float(y)
-        self.base_speed = 60.0 * (0.5 + scale)
         self.vx = self.base_speed
         self.vy = 0.0
         self.frame = 0
@@ -400,6 +430,22 @@ class Fish:
 
         self._bind()
         self.render()
+
+    # ---------- 成长 / 缩放 ----------
+    def _effective_scale(self):
+        """由基础尺寸与等级推导实际渲染缩放（封顶 GROWTH_MAX_FACTOR）。"""
+        return min(self.base_scale * (1.0 + (self.level - 1) * GROWTH_STEP),
+                   self.base_scale * GROWTH_MAX_FACTOR)
+
+    def _apply_scale(self):
+        """按当前等级重算实际缩放并重新加载帧序列 / 尺寸 / 基础速度。"""
+        self.scale = self._effective_scale()
+        self.right, self.left = species_frames(self.species[1], self.scale)
+        w, h = self.right[0][1]
+        self.w, self.h = w, h
+        self.base_speed = 60.0 * (0.5 + self.scale)
+        self.frame = 0
+        self.anim_t = 0.0
 
     # ---------- Win32 图层 ----------
     def _make_dib(self, w, h):
@@ -472,6 +518,17 @@ class Fish:
                 self.berserk = False
         mul = BERSERK_MUL if self.berserk else 1.0
 
+        # 成长：随时间积累经验，满级后停止；升级时放大体型并播放音效
+        if self.level < GROWTH_MAX_LEVEL:
+            self.growth += dt / GROWTH_SECONDS_PER_LEVEL
+            if self.growth >= 1.0:
+                self.growth -= 1.0
+                self.level += 1
+                self._apply_scale()
+                self.app.sounds.play("levelup")
+        else:
+            self.growth = 1.0
+
         anim_speed = 1.0
         if self.dart_t > 0:
             self.dart_t -= dt
@@ -536,6 +593,14 @@ class Fish:
         self.win.bind("<B1-Motion>", self._motion)
         self.win.bind("<ButtonRelease-1>", self._release)
         self.win.bind("<Button-3>", self._menu)
+        self.win.bind("<Enter>", self._enter)
+        self.win.bind("<Leave>", self._leave)
+
+    def _enter(self, e):
+        self.app.show_fish_info(self)
+
+    def _leave(self, e):
+        self.app.hide_fish_info(self)
 
     def _press(self, e):
         if self.app.fishing:  # 捕鱼模式下不拖动，交给鱼叉
