@@ -3,118 +3,113 @@
     {
       "path": "新版鱼\\huangjinsha",
       "scale": 0.7,
-      "x": 1589,
-      "y": 213
+      "x": 84,
+      "y": 504
     },
     {
       "path": "中型鱼\\hujing",
       "scale": 0.7,
-      "x": 1097,
-      "y": 397
+      "x": 89,
+      "y": 595
     },
     {
       "path": "中型鱼\\dalansha",
       "scale": 0.7,
-      "x": 1739,
-      "y": 370
+      "x": 1079,
+      "y": 787
     },
     {
       "path": "中型鱼\\chuitousha",
       "scale": 0.7,
-      "x": 1153,
-      "y": 464
+      "x": 1690,
+      "y": 407
     },
     {
       "path": "中型鱼\\zhangyu",
       "scale": 0.7,
-      "x": 194,
-      "y": 530
+      "x": 512,
+      "y": 541
     },
     {
       "path": "新版鱼\\tianshiyu",
       "scale": 0.7,
-      "x": 1787,
-      "y": 740
+      "x": 1525,
+      "y": 448
     },
     {
       "path": "新版鱼\\huangjinsha",
       "scale": 0.7,
-      "x": 520,
-      "y": 47
+      "x": 261,
+      "y": 6
     },
     {
       "path": "新版鱼\\dalanjing",
       "scale": 0.7,
-      "x": 335,
-      "y": 757
+      "x": 300,
+      "y": 604
     },
     {
       "path": "新版鱼\\tianshiyu",
       "scale": 0.7,
-      "x": 1576,
-      "y": 748
+      "x": 767,
+      "y": 75
     },
     {
       "path": "新版鱼\\jinqiangyu",
       "scale": 0.7,
-      "x": 1220,
-      "y": 299
+      "x": 842,
+      "y": 566
     },
     {
       "path": "新版鱼\\cheqiyu",
       "scale": 0.7,
-      "x": 1313,
-      "y": 870
+      "x": 1650,
+      "y": 511
     },
     {
       "path": "中型鱼\\hanbingshuimu",
       "scale": 0.7,
-      "x": 1265,
-      "y": 754
+      "x": 1434,
+      "y": 796
     },
     {
       "path": "新版鱼\\yaoqianshu",
       "scale": 0.7,
-      "x": 627,
-      "y": 215
-    },
-    {
-      "path": "新版鱼\\jinqiangyu",
-      "scale": 0.7,
-      "x": 1275,
-      "y": 815
+      "x": 1134,
+      "y": 205
     },
     {
       "path": "中型鱼\\zhonghuahou",
       "scale": 0.7,
-      "x": 1203,
-      "y": 116
+      "x": 1671,
+      "y": 261
     },
     {
       "path": "新版鱼\\cheqiyu",
       "scale": 0.7,
-      "x": 830,
-      "y": 301
+      "x": 1030,
+      "y": 84
     },
     {
       "path": "新版鱼\\dalanjing",
       "scale": 0.7,
-      "x": 1090,
-      "y": 848
+      "x": 1473,
+      "y": 770
     },
     {
       "path": "新版鱼\\jinqiangyu",
       "scale": 0.7,
-      "x": 1751,
+      "x": 563,
       "y": 82
     },
     {
       "path": "中型鱼\\haima",
       "scale": 0.7,
-      "x": 1265,
-      "y": 781
+      "x": 1400,
+      "y": 828
     }
   ],
-  "coins": 69,
-  "cannon_level": 1
+  "coins": 0,
+  "cannon_level": 1,
+  "cannon": 2
 }

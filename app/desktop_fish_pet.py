@@ -947,11 +947,13 @@ class App:
             icon_img = make_tray_icon()
         except Exception:
             icon_img = Image.new("RGBA", (64, 64), (0, 120, 215, 255))
+        def _make_action(k):
+            return lambda icon, item: self._invoke(lambda: self.set_cannon(k))
         cannon_items = []
         for i in range(len(find_cannons())):
             cannon_items.append(
                 TrayItem("炮台 %d" % (i + 1),
-                         (lambda icon, item, k=i: self._invoke(lambda: self.set_cannon(k))),
+                         _make_action(i),
                          checked=(lambda item, k=i: self.cannon_index == k)))
         menu_items = [
             TrayItem(lambda item: "暂停游动" if not self.paused else "继续游动",
