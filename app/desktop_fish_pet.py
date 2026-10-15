@@ -951,15 +951,14 @@ class FishingOverlay:
         # 捕鱼模式下：鼠标所指的鱼，在其上方画信息卡
         hovered = self._hovered_fish()
         if hovered is not None:
-            cw, ch = draw_fish_info_card(self.draw, hovered, 0, 0, self.font)
-            # 把卡片贴到鱼上方（叠加层本地坐标）
+            cw, ch = 168, 70
             cx = hovered.x - self.L + hovered.w / 2 - cw / 2
             cy = hovered.y - self.T - ch - 6
             if cy < 0:
                 cy = hovered.y - self.T + hovered.h + 6
             cx = max(0, min(cx, self.W - cw))
             cy = max(0, min(cy, self.H - ch))
-            self.img.paste(self._card_img, (int(cx), int(cy)))
+            draw_fish_info_card(self.draw, hovered, int(cx), int(cy), self.font)
 
         # 导出 BGRA（本叠加层无半透明像素，alpha 仅 0/255，无需预乘）
         r, g, b, a = self.img.split()
@@ -972,6 +971,15 @@ class FishingOverlay:
         user32.UpdateLayeredWindow(self.hwnd, self.hdc_screen, ctypes.byref(dst),
                                    ctypes.byref(sz), self.hdc_mem, ctypes.byref(src),
                                    0, ctypes.byref(blend), ULW_ALPHA)
+
+    def _hovered_fish(self):
+        """返回鼠标当前所指的鱼（屏幕坐标命中检测），无则 None。"""
+        sx = self.L + self.mx
+        sy = self.T + self.my
+        for f in self.app.fishes:
+            if f.x <= sx <= f.x + f.w and f.y <= sy <= f.y + f.h:
+                return f
+        return None
 
     def _draw_hud(self):
         x0, y0, w, h = self.hud
@@ -1217,7 +1225,7 @@ class App:
             cx, cy = (L + R) / 2, (T + B) / 2
             for i in range(2):
                 sp = self.species_list[i % len(self.species_list)]
-                self.fishes.append(Fish(self, sp, 0.7, cx - 160 + i * 320, cy))
+                self.fishes.append(Fish(self, sp, App.SCALES[0][1], cx - 160 + i * 320, cy))
 
         self.build_tray()
         # 鱼信息浮层（悬停显示），需在 build_tray 之后创建
@@ -1432,7 +1440,7 @@ class App:
         sp = random.choice(self.species_list)
         x = random.uniform(L + 50, max(L + 51, R - 350))
         y = random.uniform(T + 50, max(T + 51, B - 300))
-        self.fishes.append(Fish(self, sp, 0.7, x, y))
+        self.fishes.append(Fish(self, sp, App.SCALES[0][1], x, y))
         self.save_config()
 
     def add_fish_random(self):
@@ -1493,6 +1501,11 @@ class App:
             pass
         for f in list(self.fishes):
             f.destroy()
+        try:
+            if getattr(self, "fish_info", None) is not None:
+                self.fish_info.destroy()
+        except Exception:
+            pass
         self.root.destroy()
 
 

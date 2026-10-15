@@ -3,14 +3,18 @@
     {
       "path": "中型鱼\\haima",
       "scale": 0.7,
-      "x": 573,
-      "y": 833
+      "level": 2,
+      "growth": 0.12,
+      "x": 672,
+      "y": 559
     },
     {
       "path": "中型鱼\\dalanjing",
       "scale": 0.7,
-      "x": 769,
-      "y": 1015
+      "level": 2,
+      "growth": 0.12,
+      "x": 2051,
+      "y": 1164
     }
   ],
   "coins": 0,
