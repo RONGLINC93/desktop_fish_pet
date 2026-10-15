@@ -16,14 +16,23 @@ Windows 桌面小鱼宠物
 """
 
 import ctypes
+import io
 import json
 import math
 import os
 import random
 import re
+import struct
 import sys
+import threading
 import time
+import wave
 from ctypes import wintypes
+
+try:  # winsound 仅 Windows 自带；非 Windows 运行时优雅降级
+    import winsound
+except Exception:  # pragma: no cover
+    winsound = None
 
 import tkinter as tk
 from PIL import Image, ImageChops, ImageDraw
@@ -50,8 +59,11 @@ GA_ROOT = 2
 
 # 血条在鱼最后一次受击后多少秒自动隐藏（秒）
 HP_BAR_HIDE_AFTER = 3.0
+# 鱼被击中后进入狂暴模式的持续时间（秒）与速度倍率
+BERSERK_DURATION = 6.0
+BERSERK_MUL = 2.2
 
-
+      
 class POINT(ctypes.Structure):
     _fields_ = [("x", ctypes.c_long), ("y", ctypes.c_long)]
 
@@ -60,11 +72,11 @@ class SIZE(ctypes.Structure):
     _fields_ = [("cx", ctypes.c_long), ("cy", ctypes.c_long)]
 
 
-class BLENDFUNCTION(ctypes.Structure):
+class BLENDFUNCTION(ctypes.Structure):                          
     _fields_ = [("BlendOp", ctypes.c_ubyte), ("BlendFlags", ctypes.c_ubyte),
                 ("SourceConstantAlpha", ctypes.c_ubyte), ("AlphaFormat", ctypes.c_ubyte)]
 
-
+               
 class RECT(ctypes.Structure):
     _fields_ = [("left", ctypes.c_long), ("top", ctypes.c_long),
                 ("right", ctypes.c_long), ("bottom", ctypes.c_long)]
@@ -148,6 +160,7 @@ FISH_ROOT = os.path.join(BASE_DIR, "鱼")
 GROUPS = ["新版鱼", "中型鱼"]
 CONFIG_PATH = os.path.join(BASE_DIR, "fish_pet_config.json")
 CANNON_ROOT = os.path.join(BASE_DIR, "炮台")
+SOUND_DIR = os.path.join(BASE_DIR, "音效")
 
 
 def find_cannons():
@@ -237,6 +250,100 @@ def make_tray_icon():
     return canvas
 
 
+# ---------------------------------------------------------------- 音效
+class SoundManager:
+    """轻量音效管理器：内置合成音（无需素材文件），同时支持用 音效/ 目录下的
+    WAV 覆盖（shoot.wav / hit.wav / catch.wav / poke.wav）。基于 Windows 自带
+    的 winsound 播放，非 Windows 平台自动静音。"""
+
+    # 内置合成参数：(时长秒, 起始频率, 结束频率, 音量, 波形)
+    # 一段音效可由多段拼接而成（如“捕获”用两声上扬音）。
+    _SYNTH = {
+        "shoot": [(0.13, 900, 180, 0.55, "saw")],
+        "hit":   [(0.07, 320, 110, 0.55, "square")],
+        "catch": [(0.09, 520, 740, 0.55, "sine"), (0.12, 740, 1040, 0.55, "sine")],
+        "poke":  [(0.10, 600, 720, 0.35, "sine")],
+    }
+    _SAMPLE_RATE = 44100
+
+    def __init__(self):
+        self.enabled = True
+        self._cache = {}  # kind -> 已合成/加载的 WAV 字节
+
+    @staticmethod
+    def _synth_segment(seg, sr=_SAMPLE_RATE):
+        dur, f0, f1, vol, wave_kind = seg
+        n = max(1, int(sr * dur))
+        out = bytearray()
+        for i in range(n):
+            t = i / sr
+            frac = i / n
+            freq = f0 + (f1 - f0) * frac
+            # 快速起音 + 衰减包络，听感更像“打击”而非持续音
+            env = min(1.0, frac / 0.04) * (1.0 - frac)
+            phase = 2 * math.pi * freq * t
+            if wave_kind == "square":
+                s = 1.0 if math.sin(phase) >= 0 else -1.0
+            elif wave_kind == "saw":
+                s = 2.0 * (freq * t - math.floor(freq * t + 0.5))
+            else:  # sine
+                s = math.sin(phase)
+            sample = int(max(-1.0, min(1.0, env * vol * s)) * 32767)
+            out += struct.pack("<h", sample)
+        return bytes(out)
+
+    def _render(self, kind):
+        """生成某音效的完整 WAV 字节（单声道 16bit PCM）。优先用自定义文件。"""
+        if kind in self._cache:
+            return self._cache[kind]
+        wav_bytes = None
+        # 若音效目录中存在同名 WAV，则直接用它覆盖内置合成音
+        custom = os.path.join(SOUND_DIR, f"{kind}.wav")
+        if os.path.isfile(custom):
+            try:
+                with open(custom, "rb") as fp:
+                    wav_bytes = fp.read()
+            except Exception:
+                wav_bytes = None
+        if wav_bytes is None:
+            segs = self._SYNTH.get(kind, [(0.1, 440, 440, 0.4, "sine")])
+            pcm = b"".join(self._synth_segment(s) for s in segs)
+            buf = io.BytesIO()
+            with wave.open(buf, "wb") as w:
+                w.setnchannels(1)
+                w.setsampwidth(2)
+                w.setframerate(self._SAMPLE_RATE)
+                w.writeframes(pcm)
+            wav_bytes = buf.getvalue()
+        self._cache[kind] = wav_bytes
+        return wav_bytes
+
+    def play(self, kind):
+        if not self.enabled or winsound is None:
+            return
+        try:
+            data = self._render(kind)
+        except Exception:
+            return
+        # 在后台线程播放，避免阻塞 tkinter 主循环；SND_ASYNC 保证不卡 UI
+        threading.Thread(
+            target=self._play_async, args=(data,), daemon=True
+        ).start()
+
+    @staticmethod
+    def _play_async(data):
+        if winsound is None:
+            return
+        try:
+            # 注意：SND_MEMORY 不能和 SND_ASYNC 一起用（会抛 RuntimeError），
+            # 所以放到后台线程里“同步”播放，既不卡 UI 又能正常出声。
+            winsound.PlaySound(
+                data, winsound.SND_MEMORY | winsound.SND_NODEFAULT
+            )
+        except Exception:
+            pass
+
+
 # ---------------------------------------------------------------- 小鱼窗口
 class Fish:
     TICK_MS = 33
@@ -264,6 +371,8 @@ class Fish:
         self.max_hp = 1
         self.hp = 1
         self.max_hp_set = False
+        self.berserk = False
+        self.berserk_t = 0.0
 
         self.win = tk.Toplevel(app.root)
         self.win.overrideredirect(True)
@@ -343,12 +452,21 @@ class Fish:
         self.vx = math.cos(ang) * sp
         self.vy = math.sin(ang) * sp * 0.5
         self.dart_t = 0.8
+        self.app.sounds.play("poke")
 
     def tick(self, dt):
         if self.mode == "drag":
             return
         wa = self.app.workarea
         L, T, R, B = wa
+
+        # 狂暴计时：到点自动解除
+        if self.berserk:
+            self.berserk_t -= dt
+            if self.berserk_t <= 0:
+                self.berserk = False
+        mul = BERSERK_MUL if self.berserk else 1.0
+
         anim_speed = 1.0
         if self.dart_t > 0:
             self.dart_t -= dt
@@ -357,12 +475,15 @@ class Fish:
             self.timer -= dt
             if self.timer <= 0:
                 r = random.random()
+                if self.berserk and r > 0.15:
+                    # 狂暴时大幅提高猛冲概率，几乎不停歇地乱窜
+                    r = 0.30 + random.random() * 0.04
                 if r < 0.25:
                     self.mode = "idle"
                     self.timer = random.uniform(0.8, 2.0)
                 elif r < 0.35:
                     ang = random.uniform(0, 2 * math.pi)
-                    sp = self.base_speed * 3.5
+                    sp = self.base_speed * 3.5 * mul
                     self.vx = math.cos(ang) * sp
                     self.vy = math.sin(ang) * sp * 0.5
                     self.dart_t = random.uniform(0.5, 0.9)
@@ -371,15 +492,18 @@ class Fish:
                 else:
                     self.mode = "swim"
                     ang = random.uniform(0, 2 * math.pi)
-                    sp = self.base_speed * random.uniform(0.6, 1.4)
+                    sp = self.base_speed * random.uniform(0.6, 1.4) * mul
                     self.vx = math.cos(ang) * sp
                     self.vy = math.sin(ang) * sp * 0.4
                     self.timer = random.uniform(2.5, 6.0)
 
+        if self.berserk:
+            anim_speed = max(anim_speed, 2.0)
+
         self.bob += dt * 3.0
         if self.mode == "swim":
-            self.x += self.vx * dt
-            self.y += self.vy * dt + math.sin(self.bob) * 12.0 * dt
+            self.x += self.vx * dt * mul
+            self.y += self.vy * dt * mul + math.sin(self.bob) * 12.0 * dt
 
         # 贴边反弹
         if self.x < L:
@@ -735,6 +859,7 @@ class FishingOverlay:
                              "vx": math.cos(ang) * self.bullet_speed,
                              "vy": math.sin(ang) * self.bullet_speed,
                              "r": r, "life": 3.0})
+        self.app.sounds.play("shoot")
 
     def _ensure_hp(self, fish):
         """懒初始化鱼的血量（金币倍率越高，血越厚）。"""
@@ -764,9 +889,17 @@ class FishingOverlay:
             self.floaters.append({"x": fish.x + fish.w / 2, "y": fish.y - 22,
                                   "text": "捕获 +%d" % reward, "t": 0.0, "life": 1.1,
                                   "vy": 45, "color": (120, 255, 120)})
+            self.app.sounds.play("catch")
             self.app.save_config()
         else:
             self.effects.append({"kind": "miss", "x": x, "y": y, "t": 0.0, "life": 0.25})
+            self.app.sounds.play("hit")
+            if self.app.berserk_enabled:
+                fish.berserk = True
+                fish.berserk_t = BERSERK_DURATION
+                self.floaters.append({"x": fish.x + fish.w / 2, "y": fish.y - 36,
+                                      "text": "狂暴!", "t": 0.0, "life": 1.0,
+                                      "vy": 40, "color": (255, 70, 70)})
 
     def _try_upgrade(self):
         lv = self.app.cannon_level
@@ -861,6 +994,9 @@ class App:
         self.coins = 1000
         self.cannon_level = 1
         self.cannon_index = 0
+        self.sound_enabled = True
+        self.sounds = SoundManager()
+        self.berserk_enabled = True
         self._save_ticks = 0
         L, T, R, B = self.workarea
 
@@ -878,6 +1014,9 @@ class App:
                 self.fishes.append(Fish(self, sp, 0.7, cx - 160 + i * 320, cy))
 
         self.build_tray()
+        # 上次若在捕鱼模式，则自动恢复
+        if getattr(self, "_restore_fishing", False):
+            self.toggle_fishing()
         self.root.after(App.TICK_MS, self._loop)
         self.root.mainloop()
 
@@ -888,7 +1027,8 @@ class App:
 
     def save_config(self):
         data = {"fish": [], "coins": self.coins, "cannon_level": self.cannon_level,
-                "cannon": self.cannon_index}
+                "cannon": self.cannon_index, "sound": self.sound_enabled,
+                "berserk": self.berserk_enabled, "fishing": self.fishing}
         for f in self.fishes:
             rel = os.path.relpath(f.species[1], FISH_ROOT)
             data["fish"].append({"path": rel, "scale": round(f.scale, 3),
@@ -923,6 +1063,10 @@ class App:
             self.cannon_level = max(1, min(7, int(data["cannon_level"])))
         if isinstance(data.get("cannon"), (int, float)):
             self.cannon_index = max(0, int(data["cannon"]))
+        self.sound_enabled = bool(data.get("sound", True))
+        self.sounds.enabled = self.sound_enabled
+        self.berserk_enabled = bool(data.get("berserk", True))
+        self._restore_fishing = bool(data.get("fishing", False))
         return out or None
 
     def _loop(self):
@@ -962,6 +1106,10 @@ class App:
                      lambda icon, item: self._invoke(self.toggle_hide)),
             TrayItem(lambda item: "捕鱼模式" if not self.fishing else "退出捕鱼",
                      lambda icon, item: self._invoke(self.toggle_fishing)),
+            TrayItem(lambda item: "音效：开" if self.sound_enabled else "音效：关",
+                     lambda icon, item: self._invoke(self.toggle_sound)),
+            TrayItem(lambda item: "狂暴模式：开" if self.berserk_enabled else "狂暴模式：关",
+                     lambda icon, item: self._invoke(self.toggle_berserk)),
             TrayItem("添加一条小鱼", lambda icon, item: self._invoke(self.add_fish)),
             TrayItem("随机放几条鱼", lambda icon, item: self._invoke(self.add_fish_random)),
         ]
@@ -990,6 +1138,29 @@ class App:
             user32.ShowWindow(f.hwnd, flag)
             if not self.hidden:
                 f.render()
+        try:
+            self.tray.update_menu()
+        except Exception:
+            pass
+
+    def toggle_sound(self):
+        self.sound_enabled = not self.sound_enabled
+        self.sounds.enabled = self.sound_enabled
+        if self.sound_enabled:
+            self.sounds.play("poke")  # 开音效时给个反馈
+        self.save_config()
+        try:
+            self.tray.update_menu()
+        except Exception:
+            pass
+
+    def toggle_berserk(self):
+        self.berserk_enabled = not self.berserk_enabled
+        if not self.berserk_enabled:  # 关掉时立刻解除所有鱼的狂暴
+            for f in self.fishes:
+                f.berserk = False
+                f.berserk_t = 0.0
+        self.save_config()
         try:
             self.tray.update_menu()
         except Exception:
