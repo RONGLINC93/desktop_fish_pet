@@ -422,31 +422,90 @@ class SoundManager:
 
 
 # ---------------------------------------------------------------- 信息卡绘制
-def draw_fish_info_card(draw, fish, x, y, font):
-    """在 (x, y) 处画一张鱼信息卡：名字、等级、成长进度、血条。"""
-    cw, ch = 168, 70
-    # 背景圆角矩形（用普通矩形近似）+ 边框
-    draw.rectangle([x, y, x + cw, y + ch], fill=(20, 28, 48, 235))
-    draw.rectangle([x, y, x + cw, y + ch], outline=(120, 160, 220), width=2)
+INFO_CARD_W = 186
+INFO_CARD_H = 78
+INFO_CARD_LINGER = 2.0  # 鼠标离开鱼后，信息卡继续跟随鱼显示的秒数（鱼在游动，便于看清）
 
-    if font:
-        # 第一行：名字 + 等级（成年标注「·成年」）
-        name = getattr(fish, "name", "")
-        mature = " ·成年" if hasattr(fish, "is_mature") and fish.is_mature() else ""
-        draw.text((x + 10, y + 8), "%s  Lv%d%s" % (name, fish.level, mature),
-                  fill=(235, 240, 255), font=font)
-        # 第二行：成长进度条
-        draw.text((x + 10, y + 30), "成长", fill=(180, 210, 255), font=font)
-        ratio = max(0.0, min(1.0, fish.growth))
-        bx, by, bw, bh = x + 48, y + 31, cw - 58, 8
-        draw.rectangle([bx, by, bx + bw, by + bh], fill=(40, 50, 70))
-        draw.rectangle([bx, by, bx + bw * ratio, by + bh], fill=(120, 220, 140))
-        # 第三行：血条
-        draw.text((x + 10, y + 48), "HP", fill=(255, 150, 150), font=font)
-        hp_ratio = max(0.0, min(1.0, fish.hp / max(1, fish.max_hp)))
-        draw.rectangle([bx, by + 17, bx + bw, by + 17 + bh], fill=(40, 50, 70))
-        draw.rectangle([bx, by + 17, bx + bw * hp_ratio, by + 17 + bh],
-                       fill=(235, 90, 70))
+
+def draw_fish_info_card(img, draw, fish, x, y, font):
+    """在 (x, y) 处画一张玻璃卡片样式的鱼信息卡：名字/等级、成长进度、血量。"""
+    cw, ch = INFO_CARD_W, INFO_CARD_H
+    # 投影
+    try:
+        draw.rounded_rectangle([x + 3, y + 4, x + cw + 3, y + ch + 4],
+                               radius=13, fill=(0, 0, 0, 90))
+    except Exception:
+        pass
+    # 圆角渐变底（半透明）
+    try:
+        mask = Image.new("L", (cw, ch), 0)
+        ImageDraw.Draw(mask).rounded_rectangle([0, 0, cw - 1, ch - 1],
+                                               radius=13, fill=255)
+        grad = Image.new("RGBA", (cw, ch), (0, 0, 0, 0))
+        gd = ImageDraw.Draw(grad)
+        top = (52, 68, 112, 188)
+        bot = (18, 24, 44, 188)
+        for i in range(ch):
+            t = i / max(1, ch - 1)
+            col = tuple(int(top[k] + (bot[k] - top[k]) * t) for k in range(4))
+            gd.line([(0, i), (cw, i)], fill=col)
+        sub = img.crop((x, y, x + cw, y + ch))
+        sub.paste(grad, (0, 0), mask)
+        img.paste(sub, (x, y))
+    except Exception:
+        draw.rectangle([x, y, x + cw, y + ch], fill=(20, 28, 48, 235))
+    # 柔和描边
+    draw.rounded_rectangle([x, y, x + cw, y + ch], radius=13,
+                           outline=(130, 190, 245, 210), width=2)
+    # 左侧高亮条：狂暴时变红
+    berserk = getattr(fish, "berserk", False)
+    accent = (255, 95, 85, 220) if berserk else (110, 205, 255, 210)
+    draw.rounded_rectangle([x + 7, y + 12, x + 11, y + ch - 12], radius=2, fill=accent)
+
+    if not font:
+        return cw, ch
+
+    def _shadow_text(px, py, text, fill):
+        draw.text((px + 1, py + 1), text, fill=(0, 0, 0, 170), font=font)
+        draw.text((px, py), text, fill=fill, font=font)
+
+    def _tw(text):
+        bb = draw.textbbox((0, 0), text, font=font)
+        return bb[2] - bb[0]
+
+    # 第一行：名字（白）+ 等级（青）+ 成年（金）/ 狂暴（红）
+    tx = x + 18
+    name = getattr(fish, "name", "")
+    _shadow_text(tx, y + 8, name, (240, 245, 255))
+    tx += _tw(name) + 7
+    _shadow_text(tx, y + 8, "Lv%d" % fish.level, (130, 220, 255))
+    tx += _tw("Lv%d" % fish.level) + 6
+    if getattr(fish, "is_mature", None) and fish.is_mature():
+        _shadow_text(tx, y + 8, "成年", (255, 205, 90))
+        tx += _tw("成年") + 6
+    if berserk:
+        _shadow_text(tx, y + 8, "狂暴", (255, 110, 100))
+
+    # 圆角进度条
+    bx, bw, bh = x + 52, cw - 52 - 16, 8
+
+    def _bar(by, ratio, col):
+        draw.rounded_rectangle([bx, by, bx + bw, by + bh], radius=bh // 2,
+                               fill=(38, 48, 74, 220))
+        fw = int(bw * max(0.0, min(1.0, ratio)))
+        if fw > 2:
+            draw.rounded_rectangle([bx, by, bx + fw, by + bh], radius=bh // 2, fill=col)
+            # 顶部高光：不透明浅色（半透明白会被 ImageDraw 直接替换像素，导致分层窗口里变透明）
+            if fw > 6 and bh >= 6:
+                hl = tuple(int(c + (255 - c) * 0.38) for c in col[:3])
+                draw.rounded_rectangle([bx + 2, by + 2, bx + fw - 2, by + bh // 2],
+                                       radius=max(1, bh // 2 - 2), fill=hl)
+
+    _shadow_text(x + 18, y + 32, "成长", (185, 215, 255))
+    _bar(y + 33, getattr(fish, "growth", 0.0), (115, 220, 145))
+    _shadow_text(x + 18, y + 52, "HP", (255, 160, 150))
+    hpr = getattr(fish, "hp", 1) / max(1, getattr(fish, "max_hp", 1))
+    _bar(y + 53, hpr, (235, 85, 75))
     return cw, ch
 
 
@@ -720,7 +779,7 @@ class FishInfoOverlay:
 
     def __init__(self, app):
         self.app = app
-        self.cw, self.ch = 168, 70
+        self.cw, self.ch = INFO_CARD_W + 8, INFO_CARD_H + 8
         self.win = tk.Toplevel(app.root)
         self.win.overrideredirect(True)
         self.win.attributes("-topmost", True)
@@ -746,6 +805,7 @@ class FishInfoOverlay:
             self.font = None
         self.fish = None
         self.visible = False
+        self._hide_at = None  # 延迟隐藏的到期时间（monotonic）；None 表示无待隐藏
         self._hide()
 
     def _make_dib(self, w, h):
@@ -772,12 +832,21 @@ class FishInfoOverlay:
             return
         self.fish = fish
         self.visible = True
+        self._hide_at = None  # 取消任何待执行的延迟隐藏
 
-    def hide(self, fish=None):
+    def hide(self, fish=None, immediate=False):
         if fish is not None and self.fish is not fish:
             return
+        if immediate:
+            self._do_hide()
+            return
+        # 延迟隐藏：鱼在游动，鼠标一离开就消失不方便看，故保留一会儿继续跟随鱼
+        self._hide_at = time.monotonic() + INFO_CARD_LINGER
+
+    def _do_hide(self):
         self.fish = None
         self.visible = False
+        self._hide_at = None
         self._hide()
 
     def _hide(self):
@@ -798,6 +867,10 @@ class FishInfoOverlay:
         """每帧刷新：跟随鱼的当前位置重绘信息卡。"""
         if not self.visible or self.fish is None:
             return
+        # 延迟隐藏到期：真正收起信息卡
+        if self._hide_at is not None and time.monotonic() >= self._hide_at:
+            self._do_hide()
+            return
         f = self.fish
         L, T, R, B = self.app.roam  # 信息卡跟随鱼跨屏，按虚拟桌面收拢
         # 默认放在鱼上方；若贴顶则放到下方
@@ -809,7 +882,7 @@ class FishInfoOverlay:
         cy = max(T, min(cy, B - self.ch))
 
         self.img.paste((0, 0, 0, 0), [0, 0, self.cw, self.ch])
-        draw_fish_info_card(self.draw, f, 0, 0, self.font)
+        draw_fish_info_card(self.img, self.draw, f, 3, 3, self.font)
         r, g, b, a = self.img.split()
         bgra = Image.merge("RGBA", (b, g, r, a)).tobytes()
         ctypes.memmove(self.bits, bgra, self.cw * self.ch * 4)
@@ -849,6 +922,8 @@ class FishingOverlay:
         self.bullets = []
         self.effects = []
         self.floaters = []  # 掉血/捕获浮动文字
+        self._hover_linger_fish = None  # 瞄具离开鱼后，继续跟随显示的鱼
+        self._hover_linger_at = None    # 该跟随的到期时间（monotonic）；None=未挂
         self.gun_len = 52
         self.gun_x, self.gun_y = self.W // 2, self.H - 40
         self.cannon_anchor_y = self.H - 12          # 炮台底部贴着屏幕下缘
@@ -1086,17 +1161,27 @@ class FishingOverlay:
         self._draw_hud()
         self._premultiply_rect(self.hud)  # 半透明面板需预乘，否则颜色偏亮
 
-        # 捕鱼模式下：鼠标所指的鱼，在其上方画信息卡
+        # 捕鱼模式下：鼠标所指的鱼，在其上方画信息卡；瞄具离开后延迟 ~3s 跟随该鱼再消失
         hovered = self._hovered_fish()
         if hovered is not None:
-            cw, ch = 168, 70
-            cx = hovered.x - self.L + hovered.w / 2 - cw / 2
-            cy = hovered.y - self.T - ch - 6
+            self._hover_linger_fish = hovered
+            self._hover_linger_at = None  # 正指着，取消延迟
+        elif self._hover_linger_fish is not None:
+            if self._hover_linger_at is None:
+                self._hover_linger_at = time.monotonic() + INFO_CARD_LINGER  # 仅挂一次
+            elif time.monotonic() >= self._hover_linger_at:
+                self._hover_linger_fish = None
+                self._hover_linger_at = None
+        show_fish = hovered if hovered is not None else self._hover_linger_fish
+        if show_fish is not None and show_fish in self.app.fishes:
+            cw, ch = INFO_CARD_W, INFO_CARD_H
+            cx = show_fish.x - self.L + show_fish.w / 2 - cw / 2
+            cy = show_fish.y - self.T - ch - 6
             if cy < 0:
-                cy = hovered.y - self.T + hovered.h + 6
+                cy = show_fish.y - self.T + show_fish.h + 6
             cx = max(0, min(cx, self.W - cw))
             cy = max(0, min(cy, self.H - ch))
-            draw_fish_info_card(self.draw, hovered, int(cx), int(cy), self.font)
+            draw_fish_info_card(self.img, self.draw, show_fish, int(cx), int(cy), self.font)
             self._premultiply_rect((cx, cy, cx + cw, cy + ch))
 
         # 导出 BGRA（半透明区域已在上面预乘，其余像素 alpha 仍为 0/255）
@@ -1499,6 +1584,17 @@ class App:
             self.max_fish = max(1, min(MAX_FISH_LIMIT, int(data["max_fish"])))
         return out or None
 
+    def _fish_under_cursor(self):
+        """返回鼠标当前所指的鱼（屏幕坐标命中检测），无则 None。
+        用 GetCursorPos 轮询，不依赖 Tk 的 <Enter>/<Leave>（鱼窗口每帧移动，事件时序不可靠）。"""
+        pt = wintypes.POINT()
+        user32.GetCursorPos(ctypes.byref(pt))
+        sx, sy = pt.x, pt.y
+        for f in self.fishes:
+            if f.x <= sx <= f.x + f.w and f.y <= sy <= f.y + f.h:
+                return f
+        return None
+
     def _loop(self):
         dt = App.TICK_MS / 1000.0
         if not self.paused and not self.hidden:
@@ -1509,9 +1605,15 @@ class App:
             if not self.fishes:  # 鱼被抓光了，自动补几条继续玩
                 self.add_fish()
                 self.add_fish()
-        elif self.fish_info.visible:
-            # 非捕鱼模式下，信息卡跟随鱼实时刷新（成长/血量会变化）
-            self.fish_info.update()
+        else:
+            # 非捕鱼模式：用轮询命中检测驱动信息卡，不依赖 Tk 的 <Enter>/<Leave>
+            # （鱼窗口每帧 geometry 移动，Leave 事件时序不可靠，会立刻隐藏）
+            hovered = self._fish_under_cursor()
+            if hovered is not None:
+                self.fish_info.show(hovered)            # 指着鱼：显示并取消延迟隐藏
+            elif self.fish_info.visible and self.fish_info._hide_at is None:
+                self.fish_info.hide()                   # 离开鱼：仅挂一次延迟，不每帧重置（否则永不隐藏）
+            self.fish_info.update()                     # 跟随鱼重绘；延迟到期则真正隐藏
         self._save_ticks += 1
         if self._save_ticks >= 180:  # 约每 6 秒自动存一次位置
             self._save_ticks = 0
@@ -1698,6 +1800,7 @@ class App:
         else:
             self.fishing = True
             self.fishing_overlay = FishingOverlay(self)
+            self.fish_info.hide(immediate=True)  # 进捕鱼模式时收起普通信息卡（含延迟中的）
         try:
             self.tray.update_menu()
         except Exception:
@@ -1777,7 +1880,7 @@ class App:
     def remove_fish(self, fish):
         if fish in self.fishes:
             self.fishes.remove(fish)
-            self.fish_info.hide(fish)
+            self.fish_info.hide(fish, immediate=True)
             fish.destroy()
             self.save_config()
 
