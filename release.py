@@ -220,6 +220,16 @@ def pause_close(prompt):
             time.sleep(5)
 
 
+def countdown_close(seconds=5):
+    """完成后倒数显示 5 4 3 2 1，然后退出。"""
+    sys.stdout.write("\n")
+    for i in range(seconds, 0, -1):
+        sys.stdout.write("%d " % i)
+        sys.stdout.flush()
+        time.sleep(1)
+    sys.stdout.write("\n")
+
+
 if __name__ == "__main__":
     rc = 1
     try:
@@ -234,5 +244,5 @@ if __name__ == "__main__":
         traceback.print_exc()
         pause_close("按任意键关闭窗口...")
         sys.exit(rc)
-    pause_close("窗口将在 5 秒后自动关闭...")
+    countdown_close()
     sys.exit(rc)
