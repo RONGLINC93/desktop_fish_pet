@@ -79,6 +79,8 @@ MAX_FISH = 15
 # 开机自启：写入 HKCU 的 Run 项（用户级，无需管理员权限）
 RUN_KEY_PATH = r"Software\Microsoft\Windows\CurrentVersion\Run"
 RUN_VALUE_NAME = "DesktopFishPet"
+# 捕鱼经济：捕获奖励 = 鱼价值 × 炮台等级 × 该倍率（原为 ×1，低等级几乎不赚钱）
+REWARD_MULT = 5
 
       
 class POINT(ctypes.Structure):
@@ -1041,9 +1043,9 @@ class FishingOverlay:
         coins = self.app.coins
         lv = self.app.cannon_level
         lines = [
-            "GOLD: %d" % coins,
-            "CANNON LV%d  x%d" % (lv, lv),
-            "click panel = UPG (%d)" % (lv * 200),
+            "金币：%d" % coins,
+            "炮台 Lv%d  威力x%d" % (lv, lv),
+            "点此面板升级（%d 金币）" % (lv * 200),
         ]
         ty = y0 + 8
         for line in lines:
@@ -1149,7 +1151,7 @@ class FishingOverlay:
                               "text": "-%d" % dmg, "t": 0.0, "life": 0.8,
                               "vy": 55, "color": (255, 90, 60)})
         if fish.hp <= 0:
-            reward = value * lv
+            reward = value * lv * REWARD_MULT
             self.app.coins += reward
             self.app.remove_fish(fish)
             self.effects.append({"kind": "catch", "x": x, "y": y, "t": 0.0, "life": 0.5})

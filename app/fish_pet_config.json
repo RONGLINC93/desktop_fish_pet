@@ -1,127 +1,39 @@
 {
   "fish": [
     {
-      "path": "中型鱼\\dalansha",
-      "scale": 0.45,
-      "level": 10,
-      "growth": 1.0,
-      "x": 449,
-      "y": 658
-    },
-    {
-      "path": "新版鱼\\zhonghuahou",
-      "scale": 0.45,
-      "level": 10,
-      "growth": 1.0,
-      "x": 1865,
-      "y": 358
-    },
-    {
       "path": "新版鱼\\tianshiyu",
       "scale": 0.45,
       "level": 10,
       "growth": 1.0,
-      "x": 2434,
-      "y": 674
-    },
-    {
-      "path": "中型鱼\\haima",
-      "scale": 0.45,
-      "level": 10,
-      "growth": 1.0,
-      "x": 1783,
-      "y": 617
+      "x": 768,
+      "y": 428
     },
     {
       "path": "中型鱼\\zhonghuahou",
       "scale": 0.45,
       "level": 10,
       "growth": 1.0,
-      "x": 1827,
-      "y": 867
+      "x": 584,
+      "y": 977
     },
     {
       "path": "新版鱼\\tianshiyu",
       "scale": 0.45,
       "level": 10,
       "growth": 1.0,
-      "x": 2033,
-      "y": 813
-    },
-    {
-      "path": "新版鱼\\chuitousha",
-      "scale": 0.45,
-      "level": 10,
-      "growth": 1.0,
-      "x": 1392,
-      "y": 674
-    },
-    {
-      "path": "中型鱼\\huangjinsha",
-      "scale": 0.45,
-      "level": 10,
-      "growth": 1.0,
-      "x": 972,
-      "y": 524
-    },
-    {
-      "path": "中型鱼\\jianchijing",
-      "scale": 0.45,
-      "level": 10,
-      "growth": 1.0,
-      "x": 1573,
-      "y": 1213
-    },
-    {
-      "path": "新版鱼\\jinlong",
-      "scale": 0.45,
-      "level": 10,
-      "growth": 1.0,
-      "x": 656,
-      "y": 630
-    },
-    {
-      "path": "中型鱼\\chuitousha",
-      "scale": 0.45,
-      "level": 10,
-      "growth": 1.0,
-      "x": 1741,
-      "y": 1039
-    },
-    {
-      "path": "新版鱼\\jinqiangyu",
-      "scale": 0.45,
-      "level": 10,
-      "growth": 1.0,
-      "x": 2023,
-      "y": 1102
-    },
-    {
-      "path": "中型鱼\\hujing",
-      "scale": 0.45,
-      "level": 10,
-      "growth": 1.0,
-      "x": 937,
-      "y": 1267
-    },
-    {
-      "path": "新版鱼\\shirenyu",
-      "scale": 0.28,
-      "level": 10,
-      "growth": 1.0,
-      "x": 259,
-      "y": 589
+      "x": 1327,
+      "y": 183
     },
     {
       "path": "新版鱼\\cheqiyu",
       "scale": 0.28,
       "level": 10,
       "growth": 1.0,
-      "x": 2050,
-      "y": 1034
+      "x": 2355,
+      "y": 37
     }
   ],
-  "coins": 0,
+  "coins": 51,
   "cannon_level": 1,
   "cannon": 0,
   "sound": true,
