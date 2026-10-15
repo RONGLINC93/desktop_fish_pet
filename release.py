@@ -89,8 +89,13 @@ HINT_MARK = "开发中，变更将记录于此"
 
 
 def finalize_changelog(ver):
-    """发布成功后：把 CHANGELOG 顶部 [Unreleased] 小节落成 [ver] - 当天日期
-    （其下累积的变更随之成为本次发布记录），并在顶部新建空的 [Unreleased] 占位。"""
+    """发布成功后把 CHANGELOG 落成，兼容两种约定：
+
+    约定一（本项目当前用法）：开发期手动写 `## [ver] 未发布` 或 `## [ver] - 未发布`
+        作为该版本占位，发布时把「未发布」替换为当天日期。
+    约定二（Keep a Changelog）：开发期写在顶部 `[Unreleased]`，发布时把该小节落成
+        `## [ver] - 日期`（保留其下累积的变更），并在顶部新建空的 `[Unreleased]` 占位。
+    """
     p = os.path.join(ROOT, "CHANGELOG.md")
     if not os.path.exists(p):
         return
@@ -98,38 +103,45 @@ def finalize_changelog(ver):
     with io.open(p, encoding="utf-8") as f:
         text = f.read()
 
-    m = re.search(r"^##\s*\[Unreleased\]\s*$", text, re.MULTILINE)
-    if not m:
-        print("[提示] CHANGELOG 中未发现 [Unreleased] 小节，跳过日志落成")
-        return
-    head_start, head_end = m.start(), m.end()
-
-    # [Unreleased] 内容结束于下一个二级标题（或文件末尾）
-    nxt = re.search(r"\n##\s+\[", text[head_end:])
-    body_end = head_end + nxt.start() if nxt else len(text)
-    body = text[head_end:body_end]
-
-    # 剔除仅属于 [Unreleased] 的占位提示行，保留真实变更
-    kept = [ln for ln in body.splitlines() if HINT_MARK not in ln]
-    body = "\n".join(kept).strip("\n")
-    new_block = ("## [%s] - %s\n\n%s\n" % (ver, today, body)) if body \
-        else ("## [%s] - %s\n\n" % (ver, today))
-
-    text = text[:head_start] + new_block + text[body_end:]
-
-    # 顶部插入新的空 [Unreleased] 占位（发布时本行替换为发布日期）
-    placeholder = ("## [Unreleased]\n\n"
-                   "_开发中，变更将记录于此；发布时本行替换为发布日期。_\n")
-    ins = text.find("\n## [")
-    if ins != -1:
-        text = text[:ins + 1] + "\n" + placeholder + text[ins + 1:]
+    # 约定一：版本号小节标为「未发布」（兼容有无短横两种写法）
+    for pat in ("## [%s] - 未发布" % ver, "## [%s] 未发布" % ver):
+        if pat in text:
+            text = text.replace(pat, "## [%s] - %s" % (ver, today), 1)
+            print("[完成] CHANGELOG：%s 已标记为发布日期 %s" % (ver, today))
+            break
     else:
-        text = text.rstrip() + "\n\n" + placeholder
+        # 约定二：[Unreleased] 约定
+        m = re.search(r"^##\s*\[Unreleased\]\s*$", text, re.MULTILINE)
+        if m:
+            head_start, head_end = m.start(), m.end()
+            nxt = re.search(r"\n##\s+\[", text[head_end:])
+            body_end = head_end + nxt.start() if nxt else len(text)
+            body = text[head_end:body_end]
+
+            # 剔除仅属于 [Unreleased] 的占位提示行，保留真实变更
+            kept = [ln for ln in body.splitlines() if HINT_MARK not in ln]
+            body = "\n".join(kept).strip("\n")
+            new_block = ("## [%s] - %s\n\n%s\n" % (ver, today, body)) if body \
+                else ("## [%s] - %s\n\n" % (ver, today))
+
+            text = text[:head_start] + new_block + text[body_end:]
+
+            # 顶部插入新的空 [Unreleased] 占位（发布时本行替换为发布日期）
+            placeholder = ("## [Unreleased]\n\n"
+                           "_开发中，变更将记录于此；发布时本行替换为发布日期。_\n")
+            ins = text.find("\n## [")
+            if ins != -1:
+                text = text[:ins + 1] + "\n" + placeholder + text[ins + 1:]
+            else:
+                text = text.rstrip() + "\n\n" + placeholder
+            print("[完成] CHANGELOG：[Unreleased] 已落成 v%s (%s)，并在顶部新建 [Unreleased] 占位"
+                  % (ver, today))
+        else:
+            print("[提示] CHANGELOG 中未发现 v%s 的「未发布」小节或 [Unreleased]，跳过日志落成"
+                  % ver)
 
     with io.open(p, "w", encoding="utf-8") as f:
         f.write(text)
-    print("[完成] CHANGELOG：[Unreleased] 已落成 v%s (%s)，并在顶部新建 [Unreleased] 占位"
-          % (ver, today))
 
 
 def push_version_bump(ver):

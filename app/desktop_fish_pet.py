@@ -629,6 +629,129 @@ class Fish:
         self.app.show_menu(self, e)
 
 
+# ---------------------------------------------------------------- 鱼信息浮层
+class FishInfoOverlay:
+    """鼠标悬停在某条鱼上时，跟随它显示一张信息卡（名字/等级/成长/血条）。
+    窗口设为 disabled，不接收鼠标，避免抢走鱼的悬停事件。"""
+
+    def __init__(self, app):
+        self.app = app
+        self.cw, self.ch = 168, 70
+        self.win = tk.Toplevel(app.root)
+        self.win.overrideredirect(True)
+        self.win.attributes("-topmost", True)
+        self.win.attributes("-disabled", True)  # 不接收鼠标，避免挡住鱼的悬停
+        self.win.configure(bg="black")
+        self.win.geometry("+0+0")
+        self.win.update_idletasks()
+
+        self.hwnd = user32.GetAncestor(self.win.winfo_id(), GA_ROOT)
+        ex = user32.GetWindowLongPtrW(self.hwnd, GWL_EXSTYLE)
+        user32.SetWindowLongPtrW(self.hwnd, GWL_EXSTYLE, ex | WS_EX_LAYERED | WS_EX_TOOLWINDOW)
+
+        self.hdc_screen = user32.GetDC(0)
+        self.hdc_mem = gdi32.CreateCompatibleDC(self.hdc_screen)
+        self.bits = None
+        self.dib_size = (0, 0)
+        self._make_dib(self.cw, self.ch)
+        self.img = Image.new("RGBA", (self.cw, self.ch), (0, 0, 0, 0))
+        self.draw = ImageDraw.Draw(self.img)
+        try:
+            self.font = ImageDraw.ImageFont.load_default()
+        except Exception:
+            self.font = None
+        self.fish = None
+        self.visible = False
+        self._hide()
+
+    def _make_dib(self, w, h):
+        if getattr(self, "hbm", None):
+            gdi32.SelectObject(self.hdc_mem, self.old_hbm)
+            gdi32.DeleteObject(self.hbm)
+        bi = BITMAPINFO()
+        bi.bmiHeader.biSize = ctypes.sizeof(BITMAPINFOHEADER)
+        bi.bmiHeader.biWidth = w
+        bi.bmiHeader.biHeight = -h
+        bi.bmiHeader.biPlanes = 1
+        bi.bmiHeader.biBitCount = 32
+        bi.bmiHeader.biCompression = 0
+        bits = ctypes.c_void_p()
+        self.hbm = gdi32.CreateDIBSection(self.hdc_screen, ctypes.byref(bi), 0,
+                                          ctypes.byref(bits), None, 0)
+        self.bits = bits
+        self.old_hbm = gdi32.SelectObject(self.hdc_mem, self.hbm)
+        self.dib_size = (w, h)
+
+    def show(self, fish):
+        # 捕鱼模式下由叠加层负责画信息卡，这里不重复显示
+        if self.app.fishing:
+            return
+        self.fish = fish
+        self.visible = True
+
+    def hide(self, fish=None):
+        if fish is not None and self.fish is not fish:
+            return
+        self.fish = None
+        self.visible = False
+        self._hide()
+
+    def _hide(self):
+        # 移出屏幕并清空内容
+        self.img.paste((0, 0, 0, 0), [0, 0, self.cw, self.ch])
+        r, g, b, a = self.img.split()
+        bgra = Image.merge("RGBA", (b, g, r, a)).tobytes()
+        ctypes.memmove(self.bits, bgra, self.cw * self.ch * 4)
+        blend = BLENDFUNCTION(0, 0, 255, 1)
+        dst = POINT(-9999, -9999)
+        sz = SIZE(self.cw, self.ch)
+        src = POINT(0, 0)
+        user32.UpdateLayeredWindow(self.hwnd, self.hdc_screen, ctypes.byref(dst),
+                                   ctypes.byref(sz), self.hdc_mem, ctypes.byref(src),
+                                   0, ctypes.byref(blend), ULW_ALPHA)
+
+    def update(self):
+        """每帧刷新：跟随鱼的当前位置重绘信息卡。"""
+        if not self.visible or self.fish is None:
+            return
+        f = self.fish
+        L, T, R, B = self.app.workarea
+        # 默认放在鱼上方；若贴顶则放到下方
+        cx = f.x + f.w / 2 - self.cw / 2
+        cy = f.y - self.ch - 6
+        if cy < T:
+            cy = f.y + f.h + 6
+        cx = max(L, min(cx, R - self.cw))
+        cy = max(T, min(cy, B - self.ch))
+
+        self.img.paste((0, 0, 0, 0), [0, 0, self.cw, self.ch])
+        draw_fish_info_card(self.draw, f, 0, 0, self.font)
+        r, g, b, a = self.img.split()
+        bgra = Image.merge("RGBA", (b, g, r, a)).tobytes()
+        ctypes.memmove(self.bits, bgra, self.cw * self.ch * 4)
+        blend = BLENDFUNCTION(0, 0, 255, 1)
+        dst = POINT(int(cx), int(cy))
+        sz = SIZE(self.cw, self.ch)
+        src = POINT(0, 0)
+        user32.UpdateLayeredWindow(self.hwnd, self.hdc_screen, ctypes.byref(dst),
+                                   ctypes.byref(sz), self.hdc_mem, ctypes.byref(src),
+                                   0, ctypes.byref(blend), ULW_ALPHA)
+
+    def destroy(self):
+        try:
+            if getattr(self, "hbm", None):
+                gdi32.SelectObject(self.hdc_mem, self.old_hbm)
+                gdi32.DeleteObject(self.hbm)
+            gdi32.DeleteDC(self.hdc_mem)
+            user32.ReleaseDC(0, self.hdc_screen)
+        except Exception:
+            pass
+        try:
+            self.win.destroy()
+        except Exception:
+            pass
+
+
 # ---------------------------------------------------------------- 捕鱼叠加层
 class FishingOverlay:
     """捕鱼模式：全屏透明叠加层 + 全局鼠标钩子，画出捕鱼枪并发射鱼叉。"""
@@ -824,6 +947,19 @@ class FishingOverlay:
                 self.draw.text((fl["x"] - 14, ty), text, fill=col)
 
         self._draw_hud()
+
+        # 捕鱼模式下：鼠标所指的鱼，在其上方画信息卡
+        hovered = self._hovered_fish()
+        if hovered is not None:
+            cw, ch = draw_fish_info_card(self.draw, hovered, 0, 0, self.font)
+            # 把卡片贴到鱼上方（叠加层本地坐标）
+            cx = hovered.x - self.L + hovered.w / 2 - cw / 2
+            cy = hovered.y - self.T - ch - 6
+            if cy < 0:
+                cy = hovered.y - self.T + hovered.h + 6
+            cx = max(0, min(cx, self.W - cw))
+            cy = max(0, min(cy, self.H - ch))
+            self.img.paste(self._card_img, (int(cx), int(cy)))
 
         # 导出 BGRA（本叠加层无半透明像素，alpha 仅 0/255，无需预乘）
         r, g, b, a = self.img.split()
@@ -1072,11 +1208,11 @@ class App:
 
         saved = self.load_config()
         if saved:
-            for sp, scale, x, y in saved:
+            for sp, scale, x, y, level, growth in saved:
                 w, h = self._species_size(sp, scale)
                 x = max(L, min(x, R - w))
                 y = max(T, min(y, B - h))
-                self.fishes.append(Fish(self, sp, scale, x, y))
+                self.fishes.append(Fish(self, sp, scale, x, y, level, growth))
         if not self.fishes:  # 没有有效配置时给两条默认鱼
             cx, cy = (L + R) / 2, (T + B) / 2
             for i in range(2):
@@ -1084,6 +1220,8 @@ class App:
                 self.fishes.append(Fish(self, sp, 0.7, cx - 160 + i * 320, cy))
 
         self.build_tray()
+        # 鱼信息浮层（悬停显示），需在 build_tray 之后创建
+        self.fish_info = FishInfoOverlay(self)
         # 上次若在捕鱼模式，则自动恢复
         if getattr(self, "_restore_fishing", False):
             self.toggle_fishing()
@@ -1101,7 +1239,8 @@ class App:
                 "berserk": self.berserk_enabled, "fishing": self.fishing}
         for f in self.fishes:
             rel = os.path.relpath(f.species[1], FISH_ROOT)
-            data["fish"].append({"path": rel, "scale": round(f.scale, 3),
+            data["fish"].append({"path": rel, "scale": round(f.base_scale, 3),
+                                 "level": f.level, "growth": round(f.growth, 3),
                                  "x": int(f.x), "y": int(f.y)})
         try:
             with open(CONFIG_PATH, "w", encoding="utf-8") as fp:
@@ -1125,7 +1264,9 @@ class App:
             scale = float(item.get("scale", 0.7))
             x = float(item.get("x", 0.0))
             y = float(item.get("y", 0.0))
-            out.append((sp, scale, x, y))
+            level = int(item.get("level", 1))
+            growth = float(item.get("growth", 0.0))
+            out.append((sp, scale, x, y, level, growth))
         # 金币与炮台等级持久化
         if isinstance(data.get("coins"), (int, float)):
             self.coins = int(data["coins"])
@@ -1149,6 +1290,9 @@ class App:
             if not self.fishes:  # 鱼被抓光了，自动补几条继续玩
                 self.add_fish()
                 self.add_fish()
+        elif self.fish_info.visible:
+            # 非捕鱼模式下，信息卡跟随鱼实时刷新（成长/血量会变化）
+            self.fish_info.update()
         self._save_ticks += 1
         if self._save_ticks >= 180:  # 约每 6 秒自动存一次位置
             self._save_ticks = 0
@@ -1299,8 +1443,16 @@ class App:
     def remove_fish(self, fish):
         if fish in self.fishes:
             self.fishes.remove(fish)
+            self.fish_info.hide(fish)
             fish.destroy()
             self.save_config()
+
+    # ---------- 鱼信息浮层 ----------
+    def show_fish_info(self, fish):
+        self.fish_info.show(fish)
+
+    def hide_fish_info(self, fish):
+        self.fish_info.hide(fish)
 
     def set_species(self, fish, species):
         fish.species = species
@@ -1308,7 +1460,7 @@ class App:
         self.save_config()
 
     def set_scale(self, fish, scale):
-        fish.scale = scale
+        fish.base_scale = scale
         self._reload(fish)
         self.save_config()
 
@@ -1325,11 +1477,8 @@ class App:
 
     def _reload(self, fish):
         cx, cy = fish.x + fish.w / 2, fish.y + fish.h / 2
-        fish.right, fish.left = species_frames(fish.species[1], fish.scale)
-        fish.frame = 0
-        fish.anim_t = 0.0
-        w, h = fish.right[0][1]
-        fish.x, fish.y = cx - w / 2, cy - h / 2
+        fish._apply_scale()
+        fish.x, fish.y = cx - fish.w / 2, cy - fish.h / 2
         fish.render()
 
     def quit(self):
