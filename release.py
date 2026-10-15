@@ -84,9 +84,12 @@ def build_zip(ver):
                 continue
             dirnames[:] = [d for d in dirnames if d not in EXCLUDE_DIRS]
             for fn in filenames:
-                if fn in EXCLUDE_FILES:
+                # 排除敏感文件、所有压缩包，以及本次待生成的产物自身
+                if fn in EXCLUDE_FILES or fn.lower().endswith(".zip"):
                     continue
                 full = os.path.join(dirpath, fn)
+                if os.path.abspath(full) == os.path.abspath(dist):
+                    continue
                 z.write(full, os.path.join(rel, fn))
     print("[完成] 已构建压缩包：%s" % os.path.basename(dist))
     return dist
