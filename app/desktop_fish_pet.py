@@ -22,6 +22,7 @@ import os
 import random
 import re
 import sys
+import time
 from ctypes import wintypes
 
 import tkinter as tk
@@ -46,6 +47,9 @@ WS_EX_TOOLWINDOW = 0x00000080
 ULW_ALPHA = 2
 SPI_GETWORKAREA = 0x0030
 GA_ROOT = 2
+
+# 血条在鱼最后一次受击后多少秒自动隐藏（秒）
+HP_BAR_HIDE_AFTER = 3.0
 
 
 class POINT(ctypes.Structure):
@@ -432,7 +436,7 @@ class FishingOverlay:
         self.bullets = []
         self.effects = []
         self.floaters = []  # 掉血/捕获浮动文字
-        self.gun_len = 40
+        self.gun_len = 52
         self.gun_x, self.gun_y = self.W // 2, self.H - 40
         self.bullet_speed = 1500.0
         self.hud = (12, self.H - 78, 250, 66)  # 左下角信息面板
@@ -523,19 +527,41 @@ class FishingOverlay:
                 self.draw.line([e["x"] - r, e["y"] - r, e["x"] + r, e["y"] + r], fill=(200, 200, 200), width=2)
                 self.draw.line([e["x"] + r, e["y"] - r, e["x"] - r, e["y"] + r], fill=(200, 200, 200), width=2)
 
-        # 炮台（底部中央，跟随鼠标转向）
-        self.draw.line([(self.gun_x, self.gun_y), (ex, ey)], fill=(150, 160, 170), width=16)
-        self.draw.line([(self.gun_x, self.gun_y), (ex, ey)], fill=(90, 100, 110), width=7)
-        self.draw.ellipse([self.gun_x - 26, self.gun_y - 26, self.gun_x + 26, self.gun_y + 26],
-                          fill=(60, 70, 80))
-        self.draw.ellipse([self.gun_x - 12, self.gun_y - 12, self.gun_x + 12, self.gun_y + 12],
-                          fill=(30, 40, 50))
-        self.draw.ellipse([ex - 7, ey - 7, ex + 7, ey + 7], fill=(220, 230, 240))
+        # 炮台（底部中央，跟随鼠标转向）—— 金属炮管 + 发光底座
+        ux, uy = math.cos(ang), math.sin(ang)        # 炮口方向单位向量
+        px, py = -uy, ux                             # 垂直向量
+        gx, gy = self.gun_x, self.gun_y
+        wb, wt = 14, 9                               # 炮管根部 / 口部半宽
 
-        # 鱼的血条（被打过才显示）
+        # 底座（旋转炮塔）
+        self.draw.ellipse([gx - 30, gy - 30, gx + 30, gy + 30], fill=(34, 42, 56))
+        self.draw.ellipse([gx - 23, gy - 23, gx + 23, gy + 23], fill=(74, 88, 110))
+        self.draw.ellipse([gx - 15, gy - 15, gx + 15, gy + 15], fill=(46, 56, 72))
+        self.draw.ellipse([gx - 8, gy - 8, gx + 8, gy + 8], fill=(120, 205, 255))
+        self.draw.ellipse([gx - 4, gy - 4, gx + 4, gy + 4], fill=(235, 250, 255))
+
+        # 炮管（梯形：根部宽、口部窄，带暗色描边与上沿高光）
+        ob, ot = wb + 3, wt + 3
+        self.draw.polygon([(gx + px * ob, gy + py * ob), (gx - px * ob, gy - py * ob),
+                           (ex - px * ot, ey - py * ot), (ex + px * ot, ey + py * ot)],
+                          fill=(16, 20, 28))
+        self.draw.polygon([(gx + px * wb, gy + py * wb), (gx - px * wb, gy - py * wb),
+                           (ex - px * wt, ey - py * wt), (ex + px * wt, ey + py * wt)],
+                          fill=(156, 170, 190))
+        self.draw.line([(gx + px * wb, gy + py * wb), (ex + px * wt, ey + py * wt)],
+                       fill=(230, 240, 250), width=3)
+
+        # 炮口（环形 + 发光）
+        self.draw.ellipse([ex - wt - 3, ey - wt - 3, ex + wt + 3, ey + wt + 3],
+                          fill=(30, 38, 52))
+        self.draw.ellipse([ex - 5, ey - 5, ex + 5, ey + 5], fill=(120, 205, 255))
+        self.draw.ellipse([ex - 2, ey - 2, ex + 2, ey + 2], fill=(235, 250, 255))
+
+        # 鱼的血条（受击后短暂显示，最后一次受击 HP_BAR_HIDE_AFTER 秒后自动隐藏）
+        now = time.time()
         for f in self.app.fishes:
             self._ensure_hp(f)
-            if f.hp < f.max_hp:
+            if f.hp < f.max_hp and (now - f.last_hit) <= HP_BAR_HIDE_AFTER:
                 bx, by, bw, bh = f.x, f.y - 9, f.w, 5
                 ratio = max(0.0, f.hp / f.max_hp)
                 self.draw.rectangle([bx, by, bx + bw, by + bh], fill=(30, 30, 30, 210))
@@ -670,6 +696,7 @@ class FishingOverlay:
             fish.max_hp = value * 8
             fish.hp = fish.max_hp
             fish.max_hp_set = True
+            fish.last_hit = -1e9  # 初始视为很久没被打，不显示血条
 
     def _impact(self, x, y, fish):
         self._ensure_hp(fish)
@@ -677,6 +704,7 @@ class FishingOverlay:
         value, _ = self._fish_info(fish)
         dmg = lv * 8  # 炮台等级越高，单发伤害越高
         fish.hp -= dmg
+        fish.last_hit = time.time()  # 记录受击时间，用于血条自动隐藏
         # 掉血提示：在鱼身上方弹出伤害数字
         self.floaters.append({"x": fish.x + fish.w / 2, "y": fish.y - 6,
                               "text": "-%d" % dmg, "t": 0.0, "life": 0.8,
