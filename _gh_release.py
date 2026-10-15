@@ -73,7 +73,7 @@ def main():
         return 2
 
     tag = "v" + ver
-    pkgs = [os.path.join(ROOT, "desktop_fish_pet-%s.zip" % ver)]
+    pkgs = [os.path.join(ROOT, "desktop_fish_pet-win-%s.zip" % ver)]
     missing = [p for p in pkgs if not os.path.exists(p)]
     if missing:
         for p in missing:

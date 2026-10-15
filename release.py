@@ -71,30 +71,6 @@ def repo_slug():
     return REPO_DEFAULT
 
 
-def build_zip(ver):
-    """把项目打包成 desktop_fish_pet-<ver>.zip（排除仓库/构建/敏感文件）。"""
-    dist = os.path.join(ROOT, "desktop_fish_pet-%s.zip" % ver)
-    if os.path.exists(dist):
-        os.remove(dist)
-    with zipfile.ZipFile(dist, "w", zipfile.ZIP_DEFLATED) as z:
-        for dirpath, dirnames, filenames in os.walk(ROOT):
-            rel = os.path.relpath(dirpath, ROOT)
-            parts = rel.split(os.sep)
-            if any(p in EXCLUDE_DIRS for p in parts):
-                continue
-            dirnames[:] = [d for d in dirnames if d not in EXCLUDE_DIRS]
-            for fn in filenames:
-                # 排除敏感文件、所有压缩包，以及本次待生成的产物自身
-                if fn in EXCLUDE_FILES or fn.lower().endswith(".zip"):
-                    continue
-                full = os.path.join(dirpath, fn)
-                if os.path.abspath(full) == os.path.abspath(dist):
-                    continue
-                z.write(full, os.path.join(rel, fn))
-    print("[完成] 已构建压缩包：%s" % os.path.basename(dist))
-    return dist
-
-
 def bump_version(ver):
     """发布成功后把 version.txt 的补丁号 +1（进入下一开发版）。"""
     m = re.match(r"^([0-9]+)\.([0-9]+)\.([0-9]+)", ver)
@@ -106,6 +82,25 @@ def bump_version(ver):
     with io.open(os.path.join(ROOT, "version.txt"), "w", encoding="utf-8") as f:
         f.write(nxt + "\n")
     print("[完成] version.txt 已自动递增：%s -> %s（下一开发版）" % (ver, nxt))
+
+
+def push_version_bump():
+    """把发布后 version.txt 的版本号自增提交并推送到 origin。"""
+    branch = subprocess.run(["git", "rev-parse", "--abbrev-ref", "HEAD"],
+                            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                            text=True).stdout.strip()
+    if not branch or branch == "HEAD":
+        print("[警告] 无法获取当前分支，跳过版本号自增推送")
+        return
+    st = subprocess.run(["git", "status", "--porcelain", "version.txt"],
+                        stdout=subprocess.PIPE, text=True).stdout.strip()
+    if not st:
+        return
+    print("[信息] 提交并推送 version.txt 的版本号自增")
+    run(["git", "add", "version.txt"])
+    run(["git", "commit", "-m", "chore: 发布后 version.txt 版本号自增"])
+    auth, _ = git_auth_args()
+    run(["git"] + auth + ["push", "origin", branch])
 
 
 def main():
@@ -136,12 +131,15 @@ def main():
     if r.stdout.strip():
         print("[提示] 存在未提交改动，建议先运行「push.py」再发布")
 
-    # ---- 1/3 构建压缩包 ----
+    # ---- 1/3 构建 Windows 发布包 ----
     print("")
-    print("=== 1/3 构建源码压缩包 ===")
-    dist = build_zip(ver)
+    print("=== 1/3 构建 Windows 发布包 ===")
+    dist = os.path.join(ROOT, "desktop_fish_pet-win-%s.zip" % ver)
+    if run([sys.executable, os.path.join(ROOT, "build_win_zip.py")]) != 0:
+        print("[错误] 构建失败")
+        return 1
     if not os.path.exists(dist):
-        print("[错误] 压缩包构建失败")
+        print("[错误] 未找到构建产物 %s" % dist)
         return 1
 
     # ---- 2/3 打标签并推送 ----
@@ -199,6 +197,7 @@ def main():
     if rel_rc == 0:
         print("[成功] v%s 发布完成：标签 + Release + 压缩包均已就绪" % ver)
         bump_version(ver)
+        push_version_bump()
     else:
         print("[未完成] 仅完成本地构建与打标签")
         print("        Release 未创建，见上方说明")
