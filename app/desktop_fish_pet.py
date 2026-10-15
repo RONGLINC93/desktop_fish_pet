@@ -1080,6 +1080,7 @@ class FishingOverlay:
                 self.draw.text((fl["x"] - 14, ty), text, fill=col)
 
         self._draw_hud()
+        self._premultiply_rect(self.hud)  # 半透明面板需预乘，否则颜色偏亮
 
         # 捕鱼模式下：鼠标所指的鱼，在其上方画信息卡
         hovered = self._hovered_fish()
@@ -1092,8 +1093,9 @@ class FishingOverlay:
             cx = max(0, min(cx, self.W - cw))
             cy = max(0, min(cy, self.H - ch))
             draw_fish_info_card(self.draw, hovered, int(cx), int(cy), self.font)
+            self._premultiply_rect((cx, cy, cx + cw, cy + ch))
 
-        # 导出 BGRA（本叠加层无半透明像素，alpha 仅 0/255，无需预乘）
+        # 导出 BGRA（半透明区域已在上面预乘，其余像素 alpha 仍为 0/255）
         r, g, b, a = self.img.split()
         bgra = Image.merge("RGBA", (b, g, r, a)).tobytes()
         ctypes.memmove(self.bits, bgra, self.W * self.H * 4)
@@ -1105,6 +1107,26 @@ class FishingOverlay:
                                    ctypes.byref(sz), self.hdc_mem, ctypes.byref(src),
                                    0, ctypes.byref(blend), ULW_ALPHA)
 
+    def _premultiply_rect(self, box):
+        """对指定矩形做 alpha 预乘（UpdateLayeredWindow 的 ULW_ALPHA 要求）。
+
+        只处理含半透明像素的小块（信息面板 / 信息卡），避免每帧预乘整屏的开销。
+        """
+        x0, y0 = max(0, int(box[0])), max(0, int(box[1]))
+        x1, y1 = min(self.W, int(box[2])), min(self.H, int(box[3]))
+        w, h = x1 - x0, y1 - y0
+        if w <= 0 or h <= 0:
+            return
+        try:
+            sub = self.img.crop((x0, y0, x1, y1)).convert("RGBA")
+            r, g, b, a = sub.split()
+            pm = Image.merge("RGBA", (ImageChops.multiply(r, a),
+                                      ImageChops.multiply(g, a),
+                                      ImageChops.multiply(b, a), a))
+            self.img.paste(pm, (x0, y0))
+        except Exception:
+            pass
+
     def _hovered_fish(self):
         """返回鼠标当前所指的鱼（屏幕坐标命中检测），无则 None。"""
         sx = self.L + self.mx
@@ -1115,18 +1137,28 @@ class FishingOverlay:
         return None
 
     def _draw_hud(self):
-        x0, y0, w, h = self.hud
-        self.draw.rectangle([x0, y0, x0 + w, y0 + h], fill=(20, 28, 48))
-        self.draw.rectangle([x0, y0, x0 + w, y0 + h], outline=(120, 160, 220), width=2)
-        coins = self.app.coins
         lv = self.app.cannon_level
+        w, h = self.hud[2], self.hud[3]
+        # 摆在炮台左侧，底部与炮台底座对齐（炮台随等级变宽，故每帧重算）
+        img = self._cannon_level_img(lv)
+        cw = img.width if img is not None else int(self.cannon_base_w * (1.0 + (lv - 1) * 0.06))
+        x0 = self.gun_x - cw / 2.0 - 16 - w
+        y0 = self.H - 12 - h
+        x0 = max(12, min(x0, self.W - w - 12))
+        y0 = max(12, min(y0, self.H - h - 12))
+        self.hud = (int(x0), int(y0), int(w), int(h))
+        x0, y0, w, h = self.hud
+        # 半透明背景 + 边框
+        self.draw.rectangle([x0, y0, x0 + w, y0 + h], fill=(20, 28, 48, 150))
+        self.draw.rectangle([x0, y0, x0 + w, y0 + h], outline=(120, 160, 220, 220), width=2)
+        coins = self.app.coins
         lines = [
             "金币：%d" % coins,
             "炮台 Lv%d  威力x%d" % (lv, lv),
             "点此面板升级（%d 金币）" % (lv * 200),
         ]
         ty = y0 + 8
-        for line in lines:
+        for line in lines:       
             if self.font:
                 self.draw.text((x0 + 12, ty), line, fill=(235, 240, 255), font=self.font)
             else:
