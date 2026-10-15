@@ -84,21 +84,51 @@ def bump_version(ver):
     print("[完成] version.txt 已自动递增：%s -> %s（下一开发版）" % (ver, nxt))
 
 
-def push_version_bump():
-    """把发布后 version.txt 的版本号自增提交并推送到 origin。"""
+def finalize_changelog(ver):
+    """发布成功后：把 CHANGELOG 里 `[ver] - 未发布` 落成当天日期，
+    并在顶部插入空的 `[Unreleased]` 占位小节（若还没有）。"""
+    p = os.path.join(ROOT, "CHANGELOG.md")
+    if not os.path.exists(p):
+        return
+    today = time.strftime("%Y-%m-%d")
+    with io.open(p, encoding="utf-8") as f:
+        text = f.read()
+    # 1) 版本号小节：未发布 -> 当天日期
+    pat = "## [%s] - 未发布" % ver
+    if pat in text:
+        text = text.replace(pat, "## [%s] - %s" % (ver, today), 1)
+        print("[完成] CHANGELOG：%s 已标记为发布日期 %s" % (ver, today))
+    else:
+        print("[提示] CHANGELOG 中未发现「%s」，跳过日期落成" % pat)
+    # 2) 顶部插入 [Unreleased] 占位（避免重复）
+    if "## [Unreleased]" not in text:
+        block = ("## [Unreleased]\n\n"
+                 "_开发中，变更将记录于此；发布时本行替换为发布日期。_\n\n")
+        idx = text.find("\n## [")
+        if idx != -1:
+            text = text[:idx + 1] + block + text[idx + 1:]
+        else:
+            text = text.rstrip() + "\n\n" + block
+        print("[完成] CHANGELOG：顶部已添加 [Unreleased] 占位")
+    with io.open(p, "w", encoding="utf-8") as f:
+        f.write(text)
+
+
+def push_version_bump(ver):
+    """把发布后 version.txt 的版本号自增与 CHANGELOG 更新提交并推送到 origin。"""
     branch = subprocess.run(["git", "rev-parse", "--abbrev-ref", "HEAD"],
                             stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
                             text=True).stdout.strip()
     if not branch or branch == "HEAD":
         print("[警告] 无法获取当前分支，跳过版本号自增推送")
         return
-    st = subprocess.run(["git", "status", "--porcelain", "version.txt"],
+    st = subprocess.run(["git", "status", "--porcelain", "version.txt", "CHANGELOG.md"],
                         stdout=subprocess.PIPE, text=True).stdout.strip()
     if not st:
         return
-    print("[信息] 提交并推送 version.txt 的版本号自增")
-    run(["git", "add", "version.txt"])
-    run(["git", "commit", "-m", "chore: 发布后 version.txt 版本号自增"])
+    print("[信息] 提交并推送版本号自增与更新日志")
+    run(["git", "add", "version.txt", "CHANGELOG.md"])
+    run(["git", "commit", "-m", "chore: 发布 v%s 后更新版本号与更新日志" % ver])
     auth, _ = git_auth_args()
     run(["git"] + auth + ["push", "origin", branch])
 
@@ -197,7 +227,8 @@ def main():
     if rel_rc == 0:
         print("[成功] v%s 发布完成：标签 + Release + 压缩包均已就绪" % ver)
         bump_version(ver)
-        push_version_bump()
+        finalize_changelog(ver)
+        push_version_bump(ver)
     else:
         print("[未完成] 仅完成本地构建与打标签")
         print("        Release 未创建，见上方说明")
