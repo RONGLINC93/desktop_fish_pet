@@ -62,6 +62,11 @@ HP_BAR_HIDE_AFTER = 3.0
 # 鱼被击中后进入狂暴模式的持续时间（秒）与速度倍率
 BERSERK_DURATION = 6.0
 BERSERK_MUL = 2.2
+# 鱼的成长：每级所需秒数、每级缩放增量、最大缩放倍率、最高等级
+GROWTH_SECONDS_PER_LEVEL = 30.0
+GROWTH_STEP = 0.12
+GROWTH_MAX_FACTOR = 2.0
+GROWTH_MAX_LEVEL = 10
 
       
 class POINT(ctypes.Structure):
