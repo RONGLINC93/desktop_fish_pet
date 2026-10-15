@@ -5,38 +5,192 @@
       "scale": 0.45,
       "level": 10,
       "growth": 1.0,
-      "x": 768,
-      "y": 428
+      "x": 2982,
+      "y": 593
     },
     {
       "path": "中型鱼\\zhonghuahou",
       "scale": 0.45,
       "level": 10,
       "growth": 1.0,
-      "x": 584,
-      "y": 977
+      "x": 2112,
+      "y": 387
     },
     {
       "path": "新版鱼\\tianshiyu",
       "scale": 0.45,
       "level": 10,
       "growth": 1.0,
-      "x": 1327,
-      "y": 183
+      "x": 4156,
+      "y": 921
     },
     {
       "path": "新版鱼\\cheqiyu",
       "scale": 0.28,
       "level": 10,
       "growth": 1.0,
-      "x": 2355,
-      "y": 37
+      "x": 1616,
+      "y": 190
+    },
+    {
+      "path": "中型鱼\\hanbingshuimu",
+      "scale": 0.28,
+      "level": 10,
+      "growth": 1.0,
+      "x": 274,
+      "y": 1980
+    },
+    {
+      "path": "中型鱼\\zhangyu",
+      "scale": 0.28,
+      "level": 10,
+      "growth": 1.0,
+      "x": 460,
+      "y": 281
+    },
+    {
+      "path": "中型鱼\\jianchijing",
+      "scale": 0.28,
+      "level": 10,
+      "growth": 1.0,
+      "x": 4238,
+      "y": 825
+    },
+    {
+      "path": "中型鱼\\hujing",
+      "scale": 0.28,
+      "level": 10,
+      "growth": 1.0,
+      "x": 2510,
+      "y": 832
+    },
+    {
+      "path": "新版鱼\\leiyinlong",
+      "scale": 0.28,
+      "level": 10,
+      "growth": 1.0,
+      "x": 1028,
+      "y": 961
+    },
+    {
+      "path": "中型鱼\\haima",
+      "scale": 0.28,
+      "level": 10,
+      "growth": 1.0,
+      "x": 3013,
+      "y": 1629
+    },
+    {
+      "path": "中型鱼\\jianchijing",
+      "scale": 0.28,
+      "level": 10,
+      "growth": 1.0,
+      "x": 2671,
+      "y": 437
+    },
+    {
+      "path": "新版鱼\\cheqiyu",
+      "scale": 0.28,
+      "level": 10,
+      "growth": 1.0,
+      "x": 3631,
+      "y": 336
+    },
+    {
+      "path": "新版鱼\\tianshiyu",
+      "scale": 0.28,
+      "level": 10,
+      "growth": 1.0,
+      "x": 2547,
+      "y": 70
+    },
+    {
+      "path": "中型鱼\\zhonghuahou",
+      "scale": 0.28,
+      "level": 10,
+      "growth": 1.0,
+      "x": 4506,
+      "y": 1384
+    },
+    {
+      "path": "新版鱼\\tianshiyu",
+      "scale": 0.28,
+      "level": 10,
+      "growth": 1.0,
+      "x": 182,
+      "y": 891
+    },
+    {
+      "path": "新版鱼\\chuitousha",
+      "scale": 0.28,
+      "level": 1,
+      "growth": 0.439,
+      "x": 708,
+      "y": 1319
+    },
+    {
+      "path": "新版鱼\\yaoqianshu",
+      "scale": 0.28,
+      "level": 1,
+      "growth": 0.439,
+      "x": 2919,
+      "y": 1028
+    },
+    {
+      "path": "中型鱼\\zhangyu",
+      "scale": 0.28,
+      "level": 1,
+      "growth": 0.395,
+      "x": 311,
+      "y": 1412
+    },
+    {
+      "path": "新版鱼\\chuitousha",
+      "scale": 0.28,
+      "level": 1,
+      "growth": 0.395,
+      "x": 3238,
+      "y": 1126
+    },
+    {
+      "path": "新版鱼\\chuitousha",
+      "scale": 0.28,
+      "level": 1,
+      "growth": 0.395,
+      "x": 3351,
+      "y": 275
+    },
+    {
+      "path": "中型鱼\\zhangyu",
+      "scale": 0.28,
+      "level": 1,
+      "growth": 0.395,
+      "x": 1867,
+      "y": 903
+    },
+    {
+      "path": "中型鱼\\zhonghuahou",
+      "scale": 0.28,
+      "level": 1,
+      "growth": 0.35,
+      "x": 2343,
+      "y": 1664
+    },
+    {
+      "path": "新版鱼\\jinqiangyu",
+      "scale": 0.28,
+      "level": 1,
+      "growth": 0.35,
+      "x": 2512,
+      "y": 336
     }
   ],
-  "coins": 51,
+  "coins": 44,
   "cannon_level": 1,
   "cannon": 0,
   "sound": true,
   "berserk": true,
-  "fishing": true
+  "fishing": false,
+  "cross_screen": true,
+  "max_fish": 50
 }

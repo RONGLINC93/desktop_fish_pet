@@ -61,6 +61,12 @@ WS_EX_TOOLWINDOW = 0x00000080
 ULW_ALPHA = 2
 SPI_GETWORKAREA = 0x0030
 GA_ROOT = 2
+# 虚拟桌面（跨所有显示器）度量
+SM_XVIRTUALSCREEN = 76
+SM_YVIRTUALSCREEN = 77
+SM_CXVIRTUALSCREEN = 78
+SM_CYVIRTUALSCREEN = 79
+SM_CMONITORS = 80
 
 # 血条在鱼最后一次受击后多少秒自动隐藏（秒）
 HP_BAR_HIDE_AFTER = 3.0
@@ -76,6 +82,9 @@ GROWTH_MAX_LEVEL = 10
 MATURE_LEVEL = 6
 BREED_COOLDOWN = 120.0
 MAX_FISH = 15
+# 鱼数量上限：可选预设与硬上限（防止误设过大影响性能）
+MAX_FISH_CHOICES = [5, 10, 15, 20, 30, 50]
+MAX_FISH_LIMIT = 100
 # 开机自启：写入 HKCU 的 Run 项（用户级，无需管理员权限）
 RUN_KEY_PATH = r"Software\Microsoft\Windows\CurrentVersion\Run"
 RUN_VALUE_NAME = "DesktopFishPet"
@@ -294,6 +303,26 @@ def load_cjk_font(size=14):
         return ImageFont.load_default(size=size)
     except Exception:
         return ImageFont.load_default()
+
+
+def compute_roam_area(workarea):
+    """鱼可游走的边界：多显示器时取整个虚拟桌面（跨屏），单显示器时沿用工作区。
+
+    单显示器返回原 workarea，行为与以前完全一致；多显示器才扩展到虚拟桌面，
+    让鱼可以游到别的屏幕上。任务栏区域鱼照常会被任务栏盖住，属正常。
+    """
+    try:
+        if user32.GetSystemMetrics(SM_CMONITORS) <= 1:
+            return workarea
+        L = user32.GetSystemMetrics(SM_XVIRTUALSCREEN)
+        T = user32.GetSystemMetrics(SM_YVIRTUALSCREEN)
+        W = user32.GetSystemMetrics(SM_CXVIRTUALSCREEN)
+        H = user32.GetSystemMetrics(SM_CYVIRTUALSCREEN)
+        if W > 0 and H > 0:
+            return (L, T, L + W, T + H)
+    except Exception:
+        pass
+    return workarea
 
 
 # ---------------------------------------------------------------- 音效
@@ -556,7 +585,7 @@ class Fish:
     def tick(self, dt):
         if self.mode == "drag":
             return
-        wa = self.app.workarea
+        wa = self.app.roam  # 跨屏游走边界
         L, T, R, B = wa
 
         # 狂暴计时：到点自动解除
@@ -580,7 +609,7 @@ class Fish:
         # 繁殖：成年鱼每隔一段时间在附近生一条小鱼（受鱼池上限约束）
         if self.is_mature():
             self.breed_timer -= dt
-            if self.breed_timer <= 0 and len(self.app.fishes) < MAX_FISH:
+            if self.breed_timer <= 0 and len(self.app.fishes) < self.app.max_fish:
                 if self.app.breed_fish(self) is not None:
                     self.breed_timer = BREED_COOLDOWN
 
@@ -770,7 +799,7 @@ class FishInfoOverlay:
         if not self.visible or self.fish is None:
             return
         f = self.fish
-        L, T, R, B = self.app.workarea
+        L, T, R, B = self.app.roam  # 信息卡跟随鱼跨屏，按虚拟桌面收拢
         # 默认放在鱼上方；若贴顶则放到下方
         cx = f.x + f.w / 2 - self.cw / 2
         cy = f.y - self.ch - 6
@@ -1267,10 +1296,14 @@ class App:
         self.sounds = SoundManager()
         self.berserk_enabled = True
         self.autostart_enabled = self.is_autostart_enabled()  # 以注册表现状为准
+        self.cross_screen = True  # 跨屏游走开关；load_config 可能覆盖
+        self.max_fish = MAX_FISH  # 鱼数量上限；load_config 可能覆盖
         self._save_ticks = 0
-        L, T, R, B = self.workarea
 
         saved = self.load_config()
+        # 依据开关计算鱼的游走边界（跨屏=虚拟桌面，否则=主屏工作区）
+        self.roam = compute_roam_area(self.workarea) if self.cross_screen else self.workarea
+        L, T, R, B = self.roam  # 鱼在游走边界内生成/收拢
         if saved:
             for sp, scale, x, y, level, growth in saved:
                 w, h = self._species_size(sp, scale)
@@ -1300,7 +1333,8 @@ class App:
     def save_config(self):
         data = {"fish": [], "coins": self.coins, "cannon_level": self.cannon_level,
                 "cannon": self.cannon_index, "sound": self.sound_enabled,
-                "berserk": self.berserk_enabled, "fishing": self.fishing}
+                "berserk": self.berserk_enabled, "fishing": self.fishing,
+                "cross_screen": self.cross_screen, "max_fish": self.max_fish}
         for f in self.fishes:
             rel = os.path.relpath(f.species[1], FISH_ROOT)
             data["fish"].append({"path": rel, "scale": round(f.base_scale, 3),
@@ -1342,6 +1376,9 @@ class App:
         self.sounds.enabled = self.sound_enabled
         self.berserk_enabled = bool(data.get("berserk", True))
         self._restore_fishing = bool(data.get("fishing", False))
+        self.cross_screen = bool(data.get("cross_screen", True))
+        if isinstance(data.get("max_fish"), (int, float)):
+            self.max_fish = max(1, min(MAX_FISH_LIMIT, int(data["max_fish"])))
         return out or None
 
     def _loop(self):
@@ -1388,6 +1425,8 @@ class App:
                      lambda icon, item: self._invoke(self.toggle_sound)),
             TrayItem(lambda item: "开机自启：开" if self.is_autostart_enabled() else "开机自启：关",
                      lambda icon, item: self._invoke(self.toggle_autostart)),
+            TrayItem(lambda item: "跨屏游走：开" if self.cross_screen else "跨屏游走：关",
+                     lambda icon, item: self._invoke(self.toggle_cross_screen)),
             TrayItem(lambda item: "狂暴模式：开" if self.berserk_enabled else "狂暴模式：关",
                      lambda icon, item: self._invoke(self.toggle_berserk)),
             TrayItem("放一条小鱼", lambda icon, item: self._invoke(self.add_fish)),
@@ -1395,6 +1434,14 @@ class App:
         ]
         if cannon_items:
             menu_items.append(TrayItem("更换炮台", TrayMenu(*cannon_items)))
+        def _make_maxfish_action(v):
+            return lambda icon, item: self._invoke(lambda: self.set_max_fish(v))
+        maxfish_items = [
+            TrayItem("%d 条" % n, _make_maxfish_action(n),
+                     checked=(lambda item, v=n: self.max_fish == v))
+            for n in MAX_FISH_CHOICES
+        ]
+        menu_items.append(TrayItem("最大鱼数", TrayMenu(*maxfish_items)))
         menu_items.append(TrayItem("退出", lambda icon, item: self._invoke(self.quit)))
         menu = TrayMenu(*menu_items)
         self.tray = TrayIcon("desk_fish", icon_img, "桌面小鱼", menu)
@@ -1501,6 +1548,29 @@ class App:
         except Exception:
             pass
 
+    # ---------- 跨屏游走 ----------
+    def apply_roam(self):
+        """按 cross_screen 开关重算鱼的游走边界。"""
+        self.roam = compute_roam_area(self.workarea) if self.cross_screen else self.workarea
+
+    def toggle_cross_screen(self):
+        self.cross_screen = not self.cross_screen
+        self.apply_roam()  # 关掉时 roam 收缩回主屏，鱼会在下一帧贴边收拢回来
+        self.save_config()
+        try:
+            self.tray.update_menu()
+        except Exception:
+            pass
+
+    def set_max_fish(self, n):
+        """设置鱼数量上限（同时限制手动添加与自动繁殖）。"""
+        self.max_fish = max(1, min(MAX_FISH_LIMIT, int(n)))
+        self.save_config()
+        try:
+            self.tray.update_menu()
+        except Exception:
+            pass
+
     def toggle_fishing(self):
         if self.fishing:
             self.fishing = False
@@ -1551,7 +1621,7 @@ class App:
 
     # ---------- 操作 ----------
     def add_fish(self):
-        L, T, R, B = self.workarea
+        L, T, R, B = self.roam  # 鱼在虚拟桌面内生成/收拢（跨屏）
         sp = random.choice(self.species_list)
         x = random.uniform(L + 50, max(L + 51, R - 350))
         y = random.uniform(T + 50, max(T + 51, B - 300))
@@ -1565,9 +1635,9 @@ class App:
 
     def breed_fish(self, parent):
         """成年鱼生一条小鱼：同品种、1 级、很小，出现在父鱼附近。返回新鱼或 None。"""
-        if len(self.fishes) >= MAX_FISH:
+        if len(self.fishes) >= self.max_fish:
             return None
-        L, T, R, B = self.workarea
+        L, T, R, B = self.roam  # 鱼在虚拟桌面内生成/收拢（跨屏）
         baby_scale = App.SCALES[0][1]  # 很小
         w, h = self._species_size(parent.species, baby_scale)
         cx = parent.x + parent.w / 2 + random.uniform(-90, 90)
