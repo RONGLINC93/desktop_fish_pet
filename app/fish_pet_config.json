@@ -1,67 +1,19 @@
 {
   "fish": [
     {
-      "path": "新版鱼\\huangjinsha",
+      "path": "中型鱼\\haima",
       "scale": 0.7,
-      "x": 1939,
-      "y": 49
+      "x": 573,
+      "y": 833
     },
     {
-      "path": "中型鱼\\dalansha",
+      "path": "中型鱼\\dalanjing",
       "scale": 0.7,
-      "x": 185,
-      "y": 321
-    },
-    {
-      "path": "中型鱼\\zhangyu",
-      "scale": 0.7,
-      "x": 199,
-      "y": 509
-    },
-    {
-      "path": "新版鱼\\jinqiangyu",
-      "scale": 0.7,
-      "x": 223,
-      "y": 789
-    },
-    {
-      "path": "中型鱼\\hanbingshuimu",
-      "scale": 0.7,
-      "x": 65,
-      "y": 736
-    },
-    {
-      "path": "新版鱼\\yaoqianshu",
-      "scale": 0.7,
-      "x": 1399,
-      "y": 59
-    },
-    {
-      "path": "新版鱼\\jinqiangyu",
-      "scale": 0.7,
-      "x": 399,
-      "y": 1112
-    },
-    {
-      "path": "新版鱼\\yaoqianshu",
-      "scale": 0.7,
-      "x": 1057,
-      "y": 1237
-    },
-    {
-      "path": "新版鱼\\tianshiyu",
-      "scale": 0.7,
-      "x": 2320,
-      "y": 208
-    },
-    {
-      "path": "新版鱼\\yaoqianshu",
-      "scale": 0.7,
-      "x": 334,
-      "y": 271
+      "x": 769,
+      "y": 1015
     }
   ],
-  "coins": 1,
+  "coins": 0,
   "cannon_level": 1,
   "cannon": 0,
   "sound": true,
