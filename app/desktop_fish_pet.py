@@ -1185,7 +1185,7 @@ class FishingOverlay:
 # ---------------------------------------------------------------- 应用
 class App:
     TICK_MS = 33
-    SCALES = [("小", 0.45), ("中", 0.70), ("大", 1.00)]
+    SCALES = [("很小", 0.28), ("小", 0.45), ("中", 0.70), ("大", 1.00)]
 
     def __init__(self):
         self.root = tk.Tk()
@@ -1332,7 +1332,7 @@ class App:
                      lambda icon, item: self._invoke(self.toggle_sound)),
             TrayItem(lambda item: "狂暴模式：开" if self.berserk_enabled else "狂暴模式：关",
                      lambda icon, item: self._invoke(self.toggle_berserk)),
-            TrayItem("添加一条小鱼", lambda icon, item: self._invoke(self.add_fish)),
+            TrayItem("放一条小鱼", lambda icon, item: self._invoke(self.add_fish)),
             TrayItem("随机放几条鱼", lambda icon, item: self._invoke(self.add_fish_random)),
         ]
         if cannon_items:

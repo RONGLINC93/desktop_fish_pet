@@ -3,106 +3,146 @@
     {
       "path": "中型鱼\\haima",
       "scale": 0.7,
-      "level": 3,
-      "growth": 0.15,
-      "x": 581,
-      "y": 509
-    },
-    {
-      "path": "中型鱼\\dalanjing",
-      "scale": 0.7,
-      "level": 3,
-      "growth": 0.15,
-      "x": 416,
-      "y": 1130
+      "level": 7,
+      "growth": 0.161,
+      "x": 453,
+      "y": 843
     },
     {
       "path": "中型鱼\\dalansha",
       "scale": 0.45,
-      "level": 1,
-      "growth": 0.947,
-      "x": 837,
-      "y": 941
+      "level": 5,
+      "growth": 0.958,
+      "x": 2202,
+      "y": 462
     },
     {
       "path": "新版鱼\\zhonghuahou",
       "scale": 0.45,
-      "level": 1,
-      "growth": 0.947,
-      "x": 1307,
-      "y": 1287
+      "level": 5,
+      "growth": 0.958,
+      "x": 2297,
+      "y": 1310
     },
     {
       "path": "新版鱼\\haima",
       "scale": 0.45,
-      "level": 1,
-      "growth": 0.947,
-      "x": 1525,
-      "y": 361
+      "level": 5,
+      "growth": 0.958,
+      "x": 872,
+      "y": 661
     },
     {
       "path": "新版鱼\\tianshiyu",
       "scale": 0.45,
-      "level": 1,
-      "growth": 0.947,
-      "x": 52,
-      "y": 1323
+      "level": 5,
+      "growth": 0.958,
+      "x": 580,
+      "y": 896
     },
     {
       "path": "中型鱼\\haima",
       "scale": 0.45,
-      "level": 1,
-      "growth": 0.947,
-      "x": 415,
-      "y": 563
+      "level": 5,
+      "growth": 0.958,
+      "x": 1165,
+      "y": 784
     },
     {
       "path": "中型鱼\\zhonghuahou",
       "scale": 0.45,
-      "level": 1,
-      "growth": 0.846,
-      "x": 621,
-      "y": 983
+      "level": 5,
+      "growth": 0.857,
+      "x": 1162,
+      "y": 185
     },
     {
       "path": "新版鱼\\tianshiyu",
       "scale": 0.45,
-      "level": 1,
-      "growth": 0.792,
-      "x": 361,
-      "y": 403
+      "level": 5,
+      "growth": 0.803,
+      "x": 1172,
+      "y": 943
     },
     {
       "path": "新版鱼\\chuitousha",
       "scale": 0.45,
-      "level": 1,
-      "growth": 0.745,
-      "x": 1716,
-      "y": 36
+      "level": 5,
+      "growth": 0.756,
+      "x": 1015,
+      "y": 567
     },
     {
       "path": "中型鱼\\huangjinsha",
       "scale": 0.45,
-      "level": 1,
-      "growth": 0.745,
-      "x": 713,
-      "y": 25
+      "level": 5,
+      "growth": 0.756,
+      "x": 1195,
+      "y": 849
     },
     {
       "path": "中型鱼\\dalansha",
       "scale": 0.45,
-      "level": 1,
-      "growth": 0.745,
-      "x": 456,
-      "y": 372
+      "level": 5,
+      "growth": 0.756,
+      "x": 447,
+      "y": 793
     },
     {
       "path": "中型鱼\\jianchijing",
       "scale": 0.45,
-      "level": 1,
-      "growth": 0.745,
-      "x": 648,
-      "y": 656
+      "level": 5,
+      "growth": 0.756,
+      "x": 1311,
+      "y": 556
+    },
+    {
+      "path": "新版鱼\\zhonghuahou",
+      "scale": 0.45,
+      "level": 4,
+      "growth": 0.871,
+      "x": 2181,
+      "y": 1171
+    },
+    {
+      "path": "新版鱼\\jinlong",
+      "scale": 0.45,
+      "level": 4,
+      "growth": 0.796,
+      "x": 1245,
+      "y": 564
+    },
+    {
+      "path": "新版鱼\\dalanjing",
+      "scale": 0.45,
+      "level": 4,
+      "growth": 0.796,
+      "x": 1203,
+      "y": 782
+    },
+    {
+      "path": "中型鱼\\chuitousha",
+      "scale": 0.45,
+      "level": 4,
+      "growth": 0.796,
+      "x": 553,
+      "y": 1164
+    },
+    {
+      "path": "新版鱼\\jinqiangyu",
+      "scale": 0.45,
+      "level": 4,
+      "growth": 0.796,
+      "x": 403,
+      "y": 671
+    },
+    {
+      "path": "中型鱼\\hujing",
+      "scale": 0.45,
+      "level": 4,
+      "growth": 0.722,
+      "x": 1615,
+      "y": 462
     }
   ],
   "coins": 0,
