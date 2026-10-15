@@ -1,0 +1,13 @@
+# 凭据（含 GITHUB_TOKEN，禁止入库）
+.env
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# 构建/发布产物
+.fpk/
+build/
+dist/
+*.zip

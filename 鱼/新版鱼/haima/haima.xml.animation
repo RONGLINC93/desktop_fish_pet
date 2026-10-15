@@ -1,0 +1,22 @@
+<?xml version="1.0"?>
+<AnimationProject xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema">
+  <ProjectDir>F:\work\捕鱼达人\鱼输出_尺寸调整\新版鱼\haima</ProjectDir>
+  <Version>1.5.0.1</Version>
+  <Resources>F:\work\捕鱼达人\鱼输出_尺寸调整\新版鱼\haima\Resources</Resources>
+  <Name>haima</Name>
+  <JsonFileName>haima.json</JsonFileName>
+  <JsonFolder>F:\work\捕鱼达人\鱼输出_尺寸调整\新版鱼\haima\Json</JsonFolder>
+  <JsonList />
+  <CanvasSize>
+    <Width>0</Width>
+    <Height>0</Height>
+  </CanvasSize>
+  <filePath>F:\work\捕鱼达人\鱼输出_尺寸调整\新版鱼\haima\haima.xml.animation</filePath>
+  <ProjectType>AnimationProject</ProjectType>
+  <ResRelativePath />
+  <ResourceFileList>
+    <string>haima_paopao.plist</string>
+    <string>haima0.plist</string>
+  </ResourceFileList>
+  <bBatchImage>true</bBatchImage>
+</AnimationProject>

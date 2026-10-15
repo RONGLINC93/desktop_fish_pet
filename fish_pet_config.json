@@ -1,0 +1,90 @@
+{
+  "fish": [
+    {
+      "path": "新版鱼\\huangjinsha",
+      "scale": 0.7,
+      "x": 1341,
+      "y": 393
+    },
+    {
+      "path": "中型鱼\\hujing",
+      "scale": 0.7,
+      "x": 1036,
+      "y": 699
+    },
+    {
+      "path": "新版鱼\\huangjinsha",
+      "scale": 0.7,
+      "x": 1573,
+      "y": 366
+    },
+    {
+      "path": "中型鱼\\dalansha",
+      "scale": 0.7,
+      "x": 1219,
+      "y": 294
+    },
+    {
+      "path": "中型鱼\\chuitousha",
+      "scale": 0.7,
+      "x": 1577,
+      "y": 454
+    },
+    {
+      "path": "中型鱼\\zhangyu",
+      "scale": 0.7,
+      "x": 739,
+      "y": 521
+    },
+    {
+      "path": "中型鱼\\huangjinsha",
+      "scale": 0.7,
+      "x": 1027,
+      "y": 558
+    },
+    {
+      "path": "新版鱼\\tianshiyu",
+      "scale": 0.7,
+      "x": 1658,
+      "y": 490
+    },
+    {
+      "path": "新版鱼\\huangjinsha",
+      "scale": 0.7,
+      "x": 333,
+      "y": 35
+    },
+    {
+      "path": "新版鱼\\dalanjing",
+      "scale": 0.7,
+      "x": 1653,
+      "y": 131
+    },
+    {
+      "path": "新版鱼\\huangjinsha",
+      "scale": 0.7,
+      "x": 1483,
+      "y": 480
+    },
+    {
+      "path": "新版鱼\\tianshiyu",
+      "scale": 0.7,
+      "x": 1561,
+      "y": 470
+    },
+    {
+      "path": "新版鱼\\jinqiangyu",
+      "scale": 0.7,
+      "x": 1023,
+      "y": 168
+    },
+    {
+      "path": "中型鱼\\zhonghuahou",
+      "scale": 0.7,
+      "x": 1408,
+      "y": 207
+    }
+  ],
+  "coins": 623,
+  "cannon_level": 1
+}

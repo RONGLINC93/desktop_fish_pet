@@ -1,0 +1,19 @@
+<?xml version="1.0"?>
+<AnimationProject xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema">
+  <ProjectDir>F:\work\捕鱼达人\鱼输出_尺寸调整\中型鱼\jianchijing</ProjectDir>
+  <Version>1.5.0.1</Version>
+  <Resources>F:\work\捕鱼达人\鱼输出_尺寸调整\中型鱼\jianchijing\Resources</Resources>
+  <Name>jianchijing</Name>
+  <JsonFileName>jianchijing.json</JsonFileName>
+  <JsonFolder>F:\work\捕鱼达人\鱼输出_尺寸调整\中型鱼\jianchijing\Json</JsonFolder>
+  <JsonList />
+  <CanvasSize>
+    <Width>0</Width>
+    <Height>0</Height>
+  </CanvasSize>
+  <filePath>F:\work\捕鱼达人\鱼输出_尺寸调整\中型鱼\jianchijing\jianchijing.xml.animation</filePath>
+  <ProjectType>AnimationProject</ProjectType>
+  <ResRelativePath />
+  <ResourceFileList />
+  <bBatchImage>false</bBatchImage>
+</AnimationProject>

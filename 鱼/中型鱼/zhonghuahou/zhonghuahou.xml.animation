@@ -1,0 +1,23 @@
+<?xml version="1.0"?>
+<AnimationProject xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema">
+  <ProjectDir>F:\work\捕鱼达人\鱼输出_尺寸调整\中型鱼\zhonghuahou</ProjectDir>
+  <Version>1.5.0.1</Version>
+  <Resources>F:\work\捕鱼达人\鱼输出_尺寸调整\中型鱼\zhonghuahou\Resources</Resources>
+  <Name>zhonghuahou</Name>
+  <JsonFileName>zhonghuahou.json</JsonFileName>
+  <JsonFolder>F:\work\捕鱼达人\鱼输出_尺寸调整\中型鱼\zhonghuahou\Json</JsonFolder>
+  <JsonList />
+  <CanvasSize>
+    <Width>0</Width>
+    <Height>0</Height>
+  </CanvasSize>
+  <filePath>F:\work\捕鱼达人\鱼输出_尺寸调整\中型鱼\zhonghuahou\zhonghuahou.xml.animation</filePath>
+  <ProjectType>AnimationProject</ProjectType>
+  <ResRelativePath />
+  <ResourceFileList>
+    <string>zhonghuahou_xingxing.plist</string>
+    <string>zhonghuahou_paopao.plist</string>
+    <string>zhonghuahou0.plist</string>
+  </ResourceFileList>
+  <bBatchImage>true</bBatchImage>
+</AnimationProject>
