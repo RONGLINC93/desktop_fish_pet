@@ -4,7 +4,11 @@
 
 格式基于 [Keep a Changelog](https://keepachangelog.com/)，版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
-## [1.0.1] - 未发布
+## [Unreleased]
+
+_开发中，变更将记录于此；发布时本行替换为发布日期。_
+
+## [1.0.1] - 2026-10-15
 
 ### 新增
 - 独立打包脚本 `build_win_zip.py`：双击即可生成干净的 Windows 发布包 `desktop_fish_pet-win-<版本>.zip`，只含运行所需文件，排除 git 仓库、凭据与开发辅助脚本。
