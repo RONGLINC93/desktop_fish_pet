@@ -46,7 +46,7 @@ def api(url, token, data=None, method=None, ctype="application/json"):
     req.add_header("Accept", "application/vnd.github+json")
     if data is not None:
         req.add_header("Content-Type", ctype)
-    resp = urllib.request.urlopen(req, timeout=120)
+    resp = urllib.request.urlopen(req, timeout=60)
     return json.loads(resp.read().decode("utf-8"))
 
 
@@ -114,11 +114,25 @@ def main():
         if name in existing:
             print("[资产] 已存在同名资产，跳过：" + name)
             continue
+        size = os.path.getsize(p)
+        print("[资产] 上传中：%s  (%.1f MB) ..." % (name, size / 1048576.0))
         data = io.open(p, "rb").read()
         url = up_root + "/releases/%s/assets?name=%s" % (rid, urllib.parse.quote(name))
-        out = api(url, token, data=data, method="POST",
-                  ctype="application/octet-stream")
-        print("[资产] 已上传：%s  %d bytes" % (out.get("name"), out.get("size")))
+        ok = False
+        for attempt in range(1, 4):
+            try:
+                out = api(url, token, data=data, method="POST",
+                          ctype="application/octet-stream")
+                print("[资产] 已上传：%s  %d bytes" % (out.get("name"), out.get("size")))
+                ok = True
+                break
+            except Exception as e:
+                print("[警告] 第 %d 次上传失败：%s" % (attempt, e))
+                if attempt < 3:
+                    print("         重试中 ...")
+        if not ok:
+            print("[错误] 资产上传失败：" + name)
+            return 2
 
     rel = api(api_root + "/releases/tags/" + tag, token)
     print("")
