@@ -147,6 +147,18 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 FISH_ROOT = os.path.join(BASE_DIR, "鱼")
 GROUPS = ["新版鱼", "中型鱼"]
 CONFIG_PATH = os.path.join(BASE_DIR, "fish_pet_config.json")
+CANNON_ROOT = os.path.join(BASE_DIR, "炮台")
+
+
+def find_cannons():
+    """扫描炮台素材目录，返回按文件名排序的炮台图片路径列表。"""
+    if not os.path.isdir(CANNON_ROOT):
+        return []
+    out = []
+    for fn in sorted(os.listdir(CANNON_ROOT)):
+        if fn.lower().endswith(".png"):
+            out.append(os.path.join(CANNON_ROOT, fn))
+    return out
 
 NAMES = {
     "cheqiyu": "扯旗鱼", "chuitousha": "锤头鲨", "dalanjing": "大蓝鲸",
@@ -438,6 +450,15 @@ class FishingOverlay:
         self.floaters = []  # 掉血/捕获浮动文字
         self.gun_len = 52
         self.gun_x, self.gun_y = self.W // 2, self.H - 40
+        self.cannon_anchor_y = self.H - 12          # 炮台底部贴着屏幕下缘
+        self.cannon_tilt_max = 32.0                 # 炮台最大倾斜角（度）
+        self.cannons = find_cannons()
+        self.cannon_index = getattr(app, "cannon_index", 0)
+        self.cannon_img = None
+        self.cannon_barrel_len = 0
+        self.muzzle = (self.gun_x, self.gun_y - 60)  # 炮口（子弹出生点）
+        self._cannon_cache = {}                      # (索引, 角度) -> 旋转后的贴图
+        self._load_cannon()
         self.bullet_speed = 1500.0
         self.hud = (12, self.H - 78, 250, 66)  # 左下角信息面板
         try:
@@ -495,13 +516,67 @@ class FishingOverlay:
         self.old_hbm = gdi32.SelectObject(self.hdc_mem, self.hbm)
         self.dib_size = (w, h)
 
+    # ---------- 炮台 ----------
+    def _load_cannon(self):
+        """加载当前炮台皮肤：统一缩放到同宽，便于 6 个炮台视觉大小一致。"""
+        self.cannon_img = None
+        if not self.cannons:
+            return
+        path = self.cannons[self.cannon_index % len(self.cannons)]
+        try:
+            im = Image.open(path).convert("RGBA")
+        except Exception:
+            return
+        target_w = 150
+        im = im.resize((target_w, max(1, int(im.height * target_w / im.width))),
+                       Image.LANCZOS)
+        self.cannon_img = im
+        self.cannon_barrel_len = im.height - 2
+        self._cannon_cache = {}
+
+    def set_cannon(self, idx):
+        """切换炮台皮肤并立即重绘。"""
+        self.cannon_index = idx
+        self._load_cannon()
+        self._render()
+
+    def _draw_cannon(self, ang):
+        """在底部中央绘制炮台贴图，随鼠标小幅倾斜，并记录炮口位置。"""
+        gx = self.gun_x
+        anchor_y = self.cannon_anchor_y
+        if self.cannon_img is None:  # 无贴图时退回简单圆形基座
+            self.draw.ellipse([gx - 26, anchor_y - 56, gx + 26, anchor_y],
+                              fill=(74, 88, 110))
+            self.draw.ellipse([gx - 10, anchor_y - 46, gx + 10, anchor_y - 26],
+                              fill=(120, 205, 255))
+            self.muzzle = (gx, anchor_y - 56)
+            return
+        # 目标相对“正上方”的偏差 -> 倾斜角（限幅，避免底座倒转）
+        rel = ang + math.pi / 2.0
+        lim = math.radians(self.cannon_tilt_max)
+        tilt = max(-lim, min(lim, rel))
+        key = (self.cannon_index, int(round(math.degrees(tilt))))
+        item = self._cannon_cache.get(key)
+        if item is None:
+            im = self.cannon_img
+            pad = int(max(im.width, im.height) * 0.7) + 4
+            canvas = Image.new("RGBA", (im.width + pad * 2, im.height + pad * 2), (0, 0, 0, 0))
+            canvas.paste(im, (pad, pad))
+            pivot = (pad + im.width / 2.0, pad + im.height)  # 贴图底部中心
+            rot = canvas.rotate(-math.degrees(tilt), center=pivot, resample=Image.BICUBIC)
+            item = (rot, (int(gx - pivot[0]), int(anchor_y - pivot[1])))
+            self._cannon_cache[key] = item
+        rot, pos = item
+        self.img.paste(rot, pos, rot)
+        # 炮口 = 枢轴 + 旋转后的炮管向量
+        L = self.cannon_barrel_len
+        self.muzzle = (gx + L * math.sin(tilt), anchor_y - L * math.cos(tilt))
+
     def _render(self):
         self.draw.rectangle([0, 0, self.W, self.H], fill=(0, 0, 0, 0))
         dx = self.mx - self.gun_x
         dy = self.my - self.gun_y
         ang = math.atan2(dy, dx) if (dx or dy) else -math.pi / 2
-        ex = self.gun_x + math.cos(ang) * self.gun_len
-        ey = self.gun_y + math.sin(ang) * self.gun_len
 
         # 子弹
         for b in self.bullets:
@@ -527,35 +602,8 @@ class FishingOverlay:
                 self.draw.line([e["x"] - r, e["y"] - r, e["x"] + r, e["y"] + r], fill=(200, 200, 200), width=2)
                 self.draw.line([e["x"] + r, e["y"] - r, e["x"] - r, e["y"] + r], fill=(200, 200, 200), width=2)
 
-        # 炮台（底部中央，跟随鼠标转向）—— 金属炮管 + 发光底座
-        ux, uy = math.cos(ang), math.sin(ang)        # 炮口方向单位向量
-        px, py = -uy, ux                             # 垂直向量
-        gx, gy = self.gun_x, self.gun_y
-        wb, wt = 14, 9                               # 炮管根部 / 口部半宽
-
-        # 底座（旋转炮塔）
-        self.draw.ellipse([gx - 30, gy - 30, gx + 30, gy + 30], fill=(34, 42, 56))
-        self.draw.ellipse([gx - 23, gy - 23, gx + 23, gy + 23], fill=(74, 88, 110))
-        self.draw.ellipse([gx - 15, gy - 15, gx + 15, gy + 15], fill=(46, 56, 72))
-        self.draw.ellipse([gx - 8, gy - 8, gx + 8, gy + 8], fill=(120, 205, 255))
-        self.draw.ellipse([gx - 4, gy - 4, gx + 4, gy + 4], fill=(235, 250, 255))
-
-        # 炮管（梯形：根部宽、口部窄，带暗色描边与上沿高光）
-        ob, ot = wb + 3, wt + 3
-        self.draw.polygon([(gx + px * ob, gy + py * ob), (gx - px * ob, gy - py * ob),
-                           (ex - px * ot, ey - py * ot), (ex + px * ot, ey + py * ot)],
-                          fill=(16, 20, 28))
-        self.draw.polygon([(gx + px * wb, gy + py * wb), (gx - px * wb, gy - py * wb),
-                           (ex - px * wt, ey - py * wt), (ex + px * wt, ey + py * wt)],
-                          fill=(156, 170, 190))
-        self.draw.line([(gx + px * wb, gy + py * wb), (ex + px * wt, ey + py * wt)],
-                       fill=(230, 240, 250), width=3)
-
-        # 炮口（环形 + 发光）
-        self.draw.ellipse([ex - wt - 3, ey - wt - 3, ex + wt + 3, ey + wt + 3],
-                          fill=(30, 38, 52))
-        self.draw.ellipse([ex - 5, ey - 5, ex + 5, ey + 5], fill=(120, 205, 255))
-        self.draw.ellipse([ex - 2, ey - 2, ex + 2, ey + 2], fill=(235, 250, 255))
+        # 炮台（底部中央，随鼠标小幅倾斜）；同时更新 self.muzzle
+        self._draw_cannon(ang)
 
         # 鱼的血条（受击后短暂显示，最后一次受击 HP_BAR_HIDE_AFTER 秒后自动隐藏）
         now = time.time()
@@ -679,8 +727,7 @@ class FishingOverlay:
         dx = lx - self.gun_x
         dy = ly - self.gun_y
         ang = math.atan2(dy, dx) if (dx or dy) else -math.pi / 2
-        x0 = self.gun_x + math.cos(ang) * self.gun_len
-        y0 = self.gun_y + math.sin(ang) * self.gun_len
+        x0, y0 = self.muzzle  # 从炮台炮口出生
         lv = self.app.cannon_level
         self.app.coins = max(0, self.app.coins - lv)  # 发射消耗金币
         r = 3 + lv
@@ -813,6 +860,7 @@ class App:
         self.fishing_overlay = None
         self.coins = 1000
         self.cannon_level = 1
+        self.cannon_index = 0
         self._save_ticks = 0
         L, T, R, B = self.workarea
 
@@ -839,7 +887,8 @@ class App:
         return right[0][1]
 
     def save_config(self):
-        data = {"fish": [], "coins": self.coins, "cannon_level": self.cannon_level}
+        data = {"fish": [], "coins": self.coins, "cannon_level": self.cannon_level,
+                "cannon": self.cannon_index}
         for f in self.fishes:
             rel = os.path.relpath(f.species[1], FISH_ROOT)
             data["fish"].append({"path": rel, "scale": round(f.scale, 3),
@@ -872,6 +921,8 @@ class App:
             self.coins = int(data["coins"])
         if isinstance(data.get("cannon_level"), (int, float)):
             self.cannon_level = max(1, min(7, int(data["cannon_level"])))
+        if isinstance(data.get("cannon"), (int, float)):
+            self.cannon_index = max(0, int(data["cannon"]))
         return out or None
 
     def _loop(self):
@@ -896,7 +947,13 @@ class App:
             icon_img = make_tray_icon()
         except Exception:
             icon_img = Image.new("RGBA", (64, 64), (0, 120, 215, 255))
-        menu = TrayMenu(
+        cannon_items = []
+        for i in range(len(find_cannons())):
+            cannon_items.append(
+                TrayItem("炮台 %d" % (i + 1),
+                         (lambda icon, item, k=i: self._invoke(lambda: self.set_cannon(k))),
+                         checked=(lambda item, k=i: self.cannon_index == k)))
+        menu_items = [
             TrayItem(lambda item: "暂停游动" if not self.paused else "继续游动",
                      lambda icon, item: self._invoke(self.toggle_pause)),
             TrayItem(lambda item: "收进托盘" if not self.hidden else "放出小鱼",
@@ -905,8 +962,11 @@ class App:
                      lambda icon, item: self._invoke(self.toggle_fishing)),
             TrayItem("添加一条小鱼", lambda icon, item: self._invoke(self.add_fish)),
             TrayItem("随机放几条鱼", lambda icon, item: self._invoke(self.add_fish_random)),
-            TrayItem("退出", lambda icon, item: self._invoke(self.quit)),
-        )
+        ]
+        if cannon_items:
+            menu_items.append(TrayItem("更换炮台", TrayMenu(*cannon_items)))
+        menu_items.append(TrayItem("退出", lambda icon, item: self._invoke(self.quit)))
+        menu = TrayMenu(*menu_items)
         self.tray = TrayIcon("desk_fish", icon_img, "桌面小鱼", menu)
         self.tray.run_detached()
 
@@ -962,6 +1022,14 @@ class App:
             sz_menu.add_command(label=label, command=lambda v=s: self.set_scale(fish, v))
         menu.add_cascade(label="大小", menu=sz_menu)
 
+        cannons = find_cannons()
+        if cannons:
+            c_menu = tk.Menu(menu, tearoff=0)
+            for i in range(len(cannons)):
+                c_menu.add_command(label="炮台 %d" % (i + 1),
+                                   command=lambda k=i: self.set_cannon(k))
+            menu.add_cascade(label="更换炮台", menu=c_menu)
+
         menu.add_separator()
         menu.add_command(label="再添一条小鱼", command=self.add_fish)
         menu.add_command(label="随机放几条鱼", command=self.add_fish_random)
@@ -1000,6 +1068,17 @@ class App:
         fish.scale = scale
         self._reload(fish)
         self.save_config()
+
+    def set_cannon(self, idx):
+        """切换捕鱼炮台皮肤（索引从 0 起）。"""
+        self.cannon_index = idx
+        if self.fishing_overlay is not None:
+            self.fishing_overlay.set_cannon(idx)
+        self.save_config()
+        try:
+            self.tray.update_menu()
+        except Exception:
+            pass
 
     def _reload(self, fish):
         cx, cy = fish.x + fish.w / 2, fish.y + fish.h / 2
