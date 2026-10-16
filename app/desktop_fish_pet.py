@@ -963,6 +963,7 @@ class FishingOverlay:
         self._cannon_level_cache = {}  # 等级 -> 缩放后的贴图
         self.muzzle = (self.gun_x, self.gun_y - 60)  # 炮口（子弹出生点）
         self._cannon_cache = {}                      # (索引, 等级, 角度) -> 旋转后的贴图
+        self.cannon_rect = None                       # 炮台外接矩形（在 _draw_cannon 中更新）
         self._load_cannon()
         self.bullet_speed = 1500.0
         self.hud = (12, self.H - 78, 250, 70)  # 信息面板（实际位置在 _draw_hud 里按炮台重算）
@@ -1004,6 +1005,7 @@ class FishingOverlay:
         self._hook = None
         self._kb_hook = None
         self._install_hook()
+        self.win.bind("<Button-3>", self._cannon_menu)
         self._render()
 
     # ---------- Win32 图层 ----------
@@ -1091,6 +1093,25 @@ class FishingOverlay:
         self._load_cannon()
         self._render()
 
+    def _cannon_menu(self, e):
+        """右键点击炮台时弹出皮肤切换菜单（仅命中炮台矩形才弹出）。"""
+        r = getattr(self, "cannon_rect", None)
+        if r is None:
+            return
+        x0, y0, x1, y1 = r
+        if not (x0 - 4 <= e.x <= x1 + 4 and y0 - 4 <= e.y <= y1 + 4):
+            return
+        menu = tk.Menu(self.app.root, tearoff=0)
+        c_menu = tk.Menu(menu, tearoff=0)
+        n = max(1, len(self.cannons))
+        cur = tk.IntVar(value=self.app.cannon_index % n)
+        for i in range(len(self.cannons)):
+            c_menu.add_radiobutton(label="炮台 %d" % (i + 1),
+                                   variable=cur, value=i,
+                                   command=lambda k=i: self.app.set_cannon(k))
+        menu.add_cascade(label="更换炮台", menu=c_menu)
+        menu.tk_popup(e.x_root, e.y_root)
+
     def _draw_cannon(self, ang):
         """在底部中央绘制炮台贴图（随等级放大、随鼠标倾斜），并记录炮口位置。"""
         gx = self.gun_x
@@ -1102,6 +1123,7 @@ class FishingOverlay:
             self.draw.ellipse([gx - 10, anchor_y - 46, gx + 10, anchor_y - 26],
                               fill=(120, 205, 255))
             self.muzzle = (gx, anchor_y - 56)
+            self.cannon_rect = (gx - 26, anchor_y - 56, gx + 26, anchor_y)
             if self.font:
                 self.draw.text((gx - 12, anchor_y - 30), "Lv%d" % lv,
                                fill=(235, 240, 255), font=self.font)
@@ -1123,6 +1145,7 @@ class FishingOverlay:
             self._cannon_cache[key] = item
         rot, pos = item
         self.img.paste(rot, pos, rot)
+        self.cannon_rect = (pos[0], pos[1], pos[0] + rot.width, pos[1] + rot.height)
         # 炮口 = 枢轴 + 旋转后的炮管向量
         L = im.height - 2
         self.muzzle = (gx + L * math.sin(tilt), anchor_y - L * math.cos(tilt))
@@ -1643,10 +1666,14 @@ class App:
         menu_items = [
             TrayItem(lambda item: "暂停游动" if not self.paused else "继续游动",
                      lambda icon, item: self._invoke(self.toggle_pause)),
+            TrayItem("显示小鱼", lambda icon, item: self._invoke(self.toggle_hide),
+                     checked=lambda item: not self.hidden),
             TrayItem("鱼池管理", TrayMenu(
                 TrayItem("放一条小鱼", lambda icon, item: self._invoke(self.add_fish)),
                 TrayItem("随机放几条鱼", lambda icon, item: self._invoke(self.add_fish_random)),
             )),
+            TrayItem("捕鱼模式", lambda icon, item: self._invoke(self.toggle_fishing),
+                     checked=lambda item: self.fishing),
             TrayItem("设置", lambda icon, item: self._invoke(self.open_settings)),
             TrayItem("商城", lambda icon, item: self._invoke(self.open_shop)),
             TrayItem("退出", lambda icon, item: self._invoke(self.quit)),
@@ -1894,14 +1921,6 @@ class App:
         for label, s in App.SCALES:
             sz_menu.add_command(label=label, command=lambda v=s: self.set_scale(fish, v))
         menu.add_cascade(label="大小", menu=sz_menu)
-
-        cannons = find_cannons()
-        if cannons:
-            c_menu = tk.Menu(menu, tearoff=0)
-            for i in range(len(cannons)):
-                c_menu.add_command(label="炮台 %d" % (i + 1),
-                                   command=lambda k=i: self.set_cannon(k))
-            menu.add_cascade(label="更换炮台", menu=c_menu)
 
         menu.add_separator()
         if fish.is_mature():
