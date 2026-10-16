@@ -1616,9 +1616,9 @@ class App:
                 f.tick(dt)
         if self.fishing and self.fishing_overlay is not None:
             self.fishing_overlay.tick(dt)
-            if not self.fishes:  # 鱼被抓光了，自动补几条继续玩
-                self.add_fish()
-                self.add_fish()
+            if not self.fishes:  # 鱼被抓光了，自动补几条继续玩（按买价扣费，静默）
+                self._spawn_fish(random.choice(self.species_list))
+                self._spawn_fish(random.choice(self.species_list))
         else:
             # 非捕鱼模式：用轮询命中检测驱动信息卡，不依赖 Tk 的 <Enter>/<Leave>
             # （鱼窗口每帧 geometry 移动，Leave 事件时序不可靠，会立刻隐藏）
@@ -1900,22 +1900,28 @@ class App:
 
     # ---------- 操作 ----------
     def add_fish(self):
-        L, T, R, B = self.roam  # 鱼在虚拟桌面内生成/收拢（跨屏）
+        """手动放一条随机鱼：按商城买价扣金币；金币不足/鱼池满则提示音。"""
         sp = random.choice(self.species_list)
-        x = random.uniform(L + 50, max(L + 51, R - 350))
-        y = random.uniform(T + 50, max(T + 51, B - 300))
-        self.fishes.append(Fish(self, sp, App.SCALES[0][1], x, y))
-        self.save_config()
+        fish = self._spawn_fish(sp, charge=True)
+        if fish is None:
+            self.sounds.play("error")
+        return fish
 
     def add_fish_random(self):
-        """一次性随机放 2~5 条鱼（随机品种、随机位置）。"""
+        """随机放 2~5 条鱼：每条按商城买价扣费，钱不够或鱼池满即停。"""
         for _ in range(random.randint(2, 5)):
-            self.add_fish()
+            if self._spawn_fish(random.choice(self.species_list), charge=True) is None:
+                break
 
     def breed_fish(self, parent):
-        """成年鱼生一条小鱼：同品种、1 级、很小，出现在父鱼附近。返回新鱼或 None。"""
+        """成年鱼生一条小鱼（同品种、1 级、很小，出现在父鱼附近）。
+        按商城买价扣金币；金币不足或鱼池已满则返回 None。"""
         if len(self.fishes) >= self.max_fish:
             return None
+        name = os.path.basename(parent.species[1])
+        if self.coins < self.fish_buy_price(name):
+            return None
+        self.coins -= self.fish_buy_price(name)
         L, T, R, B = self.roam  # 鱼在虚拟桌面内生成/收拢（跨屏）
         baby_scale = App.SCALES[0][1]  # 很小
         w, h = self._species_size(parent.species, baby_scale)
@@ -1942,17 +1948,34 @@ class App:
             fish.destroy()
             self.save_config()
 
-    # ---------- 商城：买卖逻辑 ----------
-    def add_fish_species(self, sp, scale=None):
-        """购买指定品种的鱼并加入鱼池（sp 为 (显示名, 目录)）。"""
+    # ---------- 放鱼（统一扣费入口） ----------
+    def _spawn_fish(self, sp, scale=None, x=None, y=None, charge=True):
+        """向鱼池放一条鱼的核心入口。charge=True 时按商城买价扣金币；
+        金币不足或鱼池已满则返回 None（不扣费、不放鱼）。"""
+        if len(self.fishes) >= self.max_fish:
+            return None
+        name = os.path.basename(sp[1])
+        if charge:
+            price = self.fish_buy_price(name)
+            if self.coins < price:
+                return None
+            self.coins -= price
         if scale is None:
             scale = App.SCALES[0][1]
-        L, T, R, B = self.roam
-        w, h = self._species_size(sp, scale)
-        x = random.uniform(L + 50, max(L + 51, R - w))
-        y = random.uniform(T + 50, max(T + 51, B - h))
+        if x is None or y is None:
+            L, T, R, B = self.roam
+            w, h = self._species_size(sp, scale)
+            if x is None:
+                x = random.uniform(L + 50, max(L + 51, R - w))
+            if y is None:
+                y = random.uniform(T + 50, max(T + 51, B - h))
         self.fishes.append(Fish(self, sp, scale, x, y))
         self.save_config()
+        return self.fishes[-1]
+
+    def add_fish_species(self, sp, scale=None):
+        """购买指定品种的鱼并加入鱼池（商城调用，按买价扣费）。"""
+        return self._spawn_fish(sp, scale=scale, charge=True)
 
     def fish_buy_price(self, name):
         """买鱼价格：鱼基础价值 × 倍数，下限 20。name 为鱼目录名。"""
@@ -2137,8 +2160,7 @@ class ShopAPI:
             return {"ok": False, "msg": "金币不足"}
         if len(app.fishes) >= app.max_fish:
             return {"ok": False, "msg": "鱼池已满（%d 条）" % app.max_fish}
-        app.coins -= price
-        app.add_fish_species(sp)
+        app.add_fish_species(sp)  # 内部按买价扣费
         app.sounds.play("poke")
         return {"ok": True, "msg": "购买成功"}
 
