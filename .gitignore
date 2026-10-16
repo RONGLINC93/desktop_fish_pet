@@ -12,4 +12,5 @@ build/
 dist/
 *.zip
 
+# 配置文件
 app/fish_pet_config.json
