@@ -43,6 +43,11 @@ import tkinter as tk
 from PIL import Image, ImageChops, ImageDraw, ImageFont
 from pystray import Icon as TrayIcon, Menu as TrayMenu, MenuItem as TrayItem
 
+try:  # 商城用 HTML 渲染（pywebview），缺失时优雅降级回 tkinter 提示
+    import webview
+except Exception:  # pragma: no cover
+    webview = None
+
 # ---------------------------------------------------------------- Win32 准备
 try:  # 高 DPI 下保证坐标 1:1
     ctypes.windll.shcore.SetProcessDpiAwareness(2)
@@ -92,7 +97,7 @@ RUN_VALUE_NAME = "DesktopFishPet"
 REWARD_MULT = 5
 # 商城经济
 FISH_BUY_MULT = 12        # 买鱼价格 = 鱼价值 × 此倍数（下限见 fish_buy_price）
-FISH_SELL_RATE = 0.5      # 卖鱼返还 = 鱼价值 × 等级 × 此比例
+FISH_SELL_RATE = 1.8      # 卖鱼返还 = 鱼价值 × 等级 × 此比例（养大才能赚钱）
 CANNON_UPGRADE_BASE = 200  # 炮台升到下一级花费 = 此基数 × 当前等级
 CANNON_SELL_RATE = 0.6     # 炮台降级返还 = 上一级升级花费 × 此比例
 CANNON_MAX_LEVEL = 7       # 炮台等级上限（与 load_config 的 min(7, …) 一致）
@@ -1681,176 +1686,48 @@ class App:
         """把托盘线程里的操作切回 tkinter 主线程执行。"""
         self.root.after(0, fn)
 
-    # ---------- 商城：UI ----------
+    # ---------- 商城：HTML（pywebview） ----------
     def open_shop(self):
-        """打开商城窗口（须在主线程调用）。"""
-        win = getattr(self, "_shop_win", None)
-        if win is not None and win.winfo_exists():
-            win.lift()
-            win.attributes("-topmost", True)
-            self._refresh_shop()
+        """打开商城窗口（HTML 界面，由主线程的 pywebview 宿主渲染）。"""
+        if webview is None:
+            self._shop_fallback()
             return
-        win = tk.Toplevel(self.root)
-        win.title("商城")
-        win.attributes("-topmost", True)
-        win.resizable(False, False)
-        self._shop_win = win
-
-        top = tk.Frame(win)
-        top.pack(fill="x", padx=10, pady=8)
-        self._shop_coins = tk.StringVar(value="金币：%d" % self.coins)
-        tk.Label(top, textvariable=self._shop_coins,
-                 font=("Microsoft YaHei", 12, "bold"), fg="#c9962b").pack(side="left")
-        tk.Button(top, text="刷新", command=self._refresh_shop).pack(side="right")
-
-        tab_bar = tk.Frame(win)
-        tab_bar.pack(fill="x", padx=10)
-        self._shop_tab = tk.StringVar(value="fish")
-        fish_btn = tk.Button(tab_bar, text="鱼", width=12,
-                             command=lambda: self._switch_shop_tab("fish"))
-        cannon_btn = tk.Button(tab_bar, text="炮台", width=12,
-                               command=lambda: self._switch_shop_tab("cannon"))
-        fish_btn.pack(side="left", padx=2)
-        cannon_btn.pack(side="left", padx=2)
-        self._shop_tab_btns = {"fish": fish_btn, "cannon": cannon_btn}
-
-        self._shop_body = tk.Frame(win)
-        self._shop_body.pack(fill="both", expand=True, padx=10, pady=8)
-        self._switch_shop_tab("fish")
-
-    def _switch_shop_tab(self, tab):
-        self._shop_tab.set(tab)
-        for k, b in self._shop_tab_btns.items():
-            b.config(relief="sunken" if k == tab else "raised")
-        self._refresh_shop()
-
-    def _refresh_shop(self):
-        win = getattr(self, "_shop_win", None)
-        if win is None or not win.winfo_exists():
+        # 窗口已开：刷新数据并置顶
+        win = getattr(self, "_shop_window", None)
+        if win is not None and getattr(win, "_alive", False):
+            try:
+                win.evaluate_js("refreshShop(true)")
+            except Exception:
+                pass
             return
-        self._shop_coins.set("金币：%d" % self.coins)
-        for w in self._shop_body.winfo_children():
-            w.destroy()
-        if self._shop_tab.get() == "fish":
-            self._build_shop_fish()
-        else:
-            self._build_shop_cannon()
 
-    def _scroll_area(self, parent):
-        """在 parent 内创建带纵向滚动条的画布，返回用于放置内容的内部 Frame。"""
-        canvas = tk.Canvas(parent, borderwidth=0, highlightthickness=0)
-        sb = tk.Scrollbar(parent, orient="vertical", command=canvas.yview)
-        inner = tk.Frame(canvas)
-        inner.bind("<Configure>",
-                   lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
-        canvas.create_window((0, 0), window=inner, anchor="nw")
-        canvas.configure(yscrollcommand=sb.set)
-        canvas.pack(side="left", fill="both", expand=True)
-        sb.pack(side="right", fill="y")
-        return inner
+        api = ShopAPI(self)
+        self._shop_api = api
+        html = load_shop_html()
+        w = webview.create_window(
+            "商城", html=html, js_api=api,
+            width=760, height=580, resizable=False, on_top=True,
+        )
+        self._shop_window = w
+        w._alive = True
+        w.events.closed += lambda *a: self._on_shop_closed()
 
-    def _build_shop_fish(self):
-        body = self._shop_body
-        buy_frame = tk.LabelFrame(body, text="购买（加入鱼池）", padx=6, pady=6)
-        buy_frame.pack(side="left", fill="both", expand=True, padx=(0, 5))
-        buy_inner = self._scroll_area(buy_frame)
-        for label, path in self.species_list:
-            name = os.path.basename(path)
-            price = self.fish_buy_price(name)
-            row = tk.Frame(buy_inner)
-            row.pack(fill="x", pady=2)
-            tk.Label(row, text=label, width=12, anchor="w").pack(side="left")
-            tk.Label(row, text="%d 金币" % price, fg="#c9962b", width=10).pack(side="left")
-            tk.Button(row, text="购买", width=6,
-                      command=lambda p=path, pr=price: self._shop_buy(p, pr)).pack(side="right")
+    def _on_shop_closed(self, *args):
+        """商城窗口被关闭时，复位状态以便下次重新打开。"""
+        w = getattr(self, "_shop_window", None)
+        if w is not None:
+            w._alive = False
+        self._shop_window = None
 
-        sell_frame = tk.LabelFrame(body, text="出售（鱼池现有）", padx=6, pady=6)
-        sell_frame.pack(side="right", fill="both", expand=True, padx=(5, 0))
-        sell_inner = self._scroll_area(sell_frame)
-        if not self.fishes:
-            tk.Label(sell_inner, text="鱼池里还没有鱼").pack(pady=10)
-        for f in list(self.fishes):
-            label = f.species[0]
-            price = self.fish_sell_price(f)
-            row = tk.Frame(sell_inner)
-            row.pack(fill="x", pady=2)
-            tk.Label(row, text="%s Lv%d" % (label, f.level), width=14, anchor="w").pack(side="left")
-            tk.Label(row, text="+%d" % price, fg="#2c9e4b", width=8).pack(side="left")
-            tk.Button(row, text="出售", width=6,
-                      command=lambda fish=f, pr=price: self._shop_sell(fish, pr)).pack(side="right")
-
-    def _build_shop_cannon(self):
-        body = self._shop_body
-        f = tk.LabelFrame(body, text="炮台", padx=10, pady=10)
-        f.pack(fill="both", expand=True)
-        tk.Label(f, text="当前炮台等级：Lv%d / %d" % (self.cannon_level, CANNON_MAX_LEVEL),
-                 font=("Microsoft YaHei", 11, "bold")).pack(pady=4)
-        if self.cannon_level < CANNON_MAX_LEVEL:
-            cost = self.cannon_upgrade_cost()
-            tk.Label(f, text="升级到 Lv%d 需要 %d 金币" % (self.cannon_level + 1, cost)).pack(pady=2)
-            tk.Button(f, text="升级炮台", width=16,
-                      command=lambda c=cost: self._shop_upgrade(c)).pack(pady=4)
-        else:
-            tk.Label(f, text="炮台已满级").pack(pady=4)
-        if self.cannon_level > 1:
-            refund = int(CANNON_UPGRADE_BASE * (self.cannon_level - 1) * CANNON_SELL_RATE)
-            tk.Label(f, text="出售炮台（降到 Lv%d）返还 %d 金币"
-                           % (self.cannon_level - 1, refund)).pack(pady=2)
-            tk.Button(f, text="出售炮台", width=16,
-                      command=lambda r=refund: self._shop_sell_cannon(r)).pack(pady=4)
-        else:
-            tk.Label(f, text="炮台已是最低等级，无法出售").pack(pady=4)
-        tk.Label(f, text="切换炮台型号（免费）", fg="#888").pack(pady=(10, 2))
-        for i in range(len(find_cannons())):
-            tk.Button(f, text="炮台 %d" % (i + 1), width=16,
-                      command=lambda idx=i: self._shop_set_cannon(idx)).pack(pady=2)
-
-    def _shop_buy(self, path, price):
-        if self.coins < price:
-            self._shop_toast("金币不足"); return
-        if len(self.fishes) >= self.max_fish:
-            self._shop_toast("鱼池已满（%d 条）" % self.max_fish); return
-        sp = next((s for s in self.species_list if s[1] == path), None)
-        if sp is None:
-            return
-        self.coins -= price
-        self.add_fish_species(sp)
-        self.sounds.play("poke")
-        self._refresh_shop()
-
-    def _shop_sell(self, fish, price):
-        if fish not in self.fishes:
-            return
-        self.sell_fish(fish)
-        self.sounds.play("catch")
-        self._refresh_shop()
-
-    def _shop_upgrade(self, cost):
-        if self.coins < cost:
-            self._shop_toast("金币不足"); return
-        if not self.upgrade_cannon():
-            return
-        self.sounds.play("levelup")
-        self._refresh_shop()
-
-    def _shop_sell_cannon(self, refund):
-        self.sell_cannon()
-        self.sounds.play("catch")
-        self._refresh_shop()
-
-    def _shop_set_cannon(self, idx):
-        self.set_cannon(idx)
-        self._refresh_shop()
-
-    def _shop_toast(self, msg):
-        win = getattr(self, "_shop_win", None)
-        if win is None or not win.winfo_exists():
-            return
-        top = tk.Toplevel(win)
-        top.title("提示")
-        top.attributes("-topmost", True)
-        tk.Label(top, text=msg, padx=20, pady=12).pack()
-        top.after(1200, top.destroy)
+    def _shop_fallback(self):
+        """未安装 pywebview 时的降级提示。"""
+        try:
+            import tkinter.messagebox as mb
+            mb.showinfo("商城",
+                        "商城界面需要 pywebview 才能以网页形式打开。\n"
+                        "请先安装依赖：pip install pywebview")
+        except Exception:
+            pass
 
     def toggle_pause(self):
         self.paused = not self.paused
@@ -2175,9 +2052,142 @@ class App:
         except Exception:
             pass
         self.root.destroy()
+        # 关闭 pywebview 宿主窗口，让主线程的 webview.start() 返回并退出进程
+        try:
+            if webview is not None:
+                host = globals().get("WEBVIEW_HOST")
+                if host is not None:
+                    host.destroy()
+        except Exception:
+            pass
 
 
-if __name__ == "__main__":
+# ---------------------------------------------------------------- 商城 HTML 桥接
+def load_shop_html():
+    """读取商城页面（自包含的 HTML/CSS/JS）。"""
+    path = os.path.join(BASE_DIR, "shop", "shop.html")
+    with open(path, "r", encoding="utf-8") as fp:
+        return fp.read()
+
+
+class ShopAPI:
+    """商城与前端 HTML/JS 的桥接层（pywebview 的 js_api）。
+    所有读写都切回 tkinter 主线程执行，避免跨线程操作 Tk。"""
+
+    def __init__(self, app):
+        self.app = app
+
+    def _run_on_main(self, fn):
+        """在 tkinter 主线程执行 fn，等待完成并返回其结果。"""
+        box, done = {}, threading.Event()
+
+        def _task():
+            try:
+                box["r"] = fn()
+            except Exception as e:  # noqa: BLE001
+                box["r"] = {"ok": False, "msg": "操作失败：%s" % e}
+            done.set()
+
+        self.app.root.after(0, _task)
+        done.wait()
+        return box.get("r")
+
+    # ---------- 只读：一次性取回全部数据 ----------
+    def get_data(self):
+        return self._run_on_main(self._collect)
+
+    def _collect(self):
+        app = self.app
+        species = []
+        for label, path in app.species_list:
+            name = os.path.basename(path)
+            species.append({"label": label, "path": path,
+                            "price": app.fish_buy_price(name)})
+        fishes = []
+        for f in list(app.fishes):
+            fishes.append({"id": id(f), "label": f.species[0],
+                           "level": f.level, "price": app.fish_sell_price(f)})
+        return {
+            "coins": app.coins,
+            "max_fish": app.max_fish,
+            "fish_count": len(app.fishes),
+            "cannon_level": app.cannon_level,
+            "cannon_max": CANNON_MAX_LEVEL,
+            "cannon_index": app.cannon_index,
+            "cannon_count": len(find_cannons()),
+            "upgrade_cost": app.cannon_upgrade_cost(),
+            "sell_cannon_refund": int(CANNON_UPGRADE_BASE
+                                      * (app.cannon_level - 1)
+                                      * CANNON_SELL_RATE),
+            "species": species,
+            "fishes": fishes,
+        }
+
+    # ---------- 写操作 ----------
+    def buy(self, path):
+        return self._run_on_main(lambda: self._buy(path))
+
+    def _buy(self, path):
+        app = self.app
+        sp = next((s for s in app.species_list if s[1] == path), None)
+        if sp is None:
+            return {"ok": False, "msg": "找不到该鱼"}
+        price = app.fish_buy_price(os.path.basename(path))
+        if app.coins < price:
+            return {"ok": False, "msg": "金币不足"}
+        if len(app.fishes) >= app.max_fish:
+            return {"ok": False, "msg": "鱼池已满（%d 条）" % app.max_fish}
+        app.coins -= price
+        app.add_fish_species(sp)
+        app.sounds.play("poke")
+        return {"ok": True, "msg": "购买成功"}
+
+    def sell(self, fish_id):
+        return self._run_on_main(lambda: self._sell(fish_id))
+
+    def _sell(self, fish_id):
+        app = self.app
+        fish = next((f for f in app.fishes if id(f) == fish_id), None)
+        if fish is None:
+            return {"ok": False, "msg": "该鱼已不在鱼池"}
+        app.sell_fish(fish)
+        app.sounds.play("catch")
+        return {"ok": True, "msg": "出售成功"}
+
+    def upgrade(self):
+        return self._run_on_main(self._upgrade)
+
+    def _upgrade(self):
+        app = self.app
+        if app.cannon_level >= CANNON_MAX_LEVEL:
+            return {"ok": False, "msg": "炮台已满级"}
+        if app.coins < app.cannon_upgrade_cost():
+            return {"ok": False, "msg": "金币不足"}
+        app.upgrade_cannon()
+        app.sounds.play("levelup")
+        return {"ok": True, "msg": "升级成功"}
+
+    def sell_cannon(self):
+        return self._run_on_main(self._sell_cannon)
+
+    def _sell_cannon(self):
+        app = self.app
+        refund = app.sell_cannon()
+        if refund <= 0:
+            return {"ok": False, "msg": "炮台已是最低等级"}
+        app.sounds.play("catch")
+        return {"ok": True, "msg": "出售成功，返还 %d 金币" % refund}
+
+    def set_cannon(self, idx):
+        return self._run_on_main(lambda: self._set_cannon(idx))
+
+    def _set_cannon(self, idx):
+        self.app.set_cannon(int(idx))
+        return {"ok": True, "msg": "已切换炮台"}
+
+
+def _app_thread():
+    """在后台线程运行 tkinter（建窗 + 主循环），主线程留给 pywebview。"""
     try:
         App()
     except Exception:
@@ -2186,4 +2196,31 @@ if __name__ == "__main__":
         if sys.stdout is None:  # pythonw 下把错误写到文件，方便排查
             with open(os.path.join(BASE_DIR, "fish_pet_error.log"), "w", encoding="utf-8") as fp:
                 traceback.print_exc(file=fp)
-        input("按回车退出...")
+        # App 启动失败时销毁宿主窗口，避免主线程的 webview.start() 卡死
+        try:
+            host = globals().get("WEBVIEW_HOST")
+            if host is not None:
+                host.destroy()
+        except Exception:
+            pass
+
+
+if __name__ == "__main__":
+    if webview is not None:
+        # pywebview 必须在主线程启动；tkinter 改到后台线程运行。
+        # 隐藏的宿主窗口让 webview.start() 持续阻塞、保持进程存活，
+        # 退出时由 App.quit() 销毁它，主线程随之结束。
+        WEBVIEW_HOST = webview.create_window(
+            "host", html="<html><body></body></html>", hidden=True)
+        threading.Thread(target=_app_thread, daemon=True).start()
+        webview.start()
+    else:
+        try:
+            App()
+        except Exception:
+            import traceback
+            traceback.print_exc()
+            if sys.stdout is None:  # pythonw 下把错误写到文件，方便排查
+                with open(os.path.join(BASE_DIR, "fish_pet_error.log"), "w", encoding="utf-8") as fp:
+                    traceback.print_exc(file=fp)
+            input("按回车退出...")

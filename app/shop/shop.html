@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>商城</title>
+<style>
+  :root{
+    --bg1:#0b2545; --bg2:#13315c; --card:#ffffff; --ink:#13315c;
+    --gold:#f2c94c; --gold-ink:#9a6b00; --green:#27ae60; --muted:#8aa0c0;
+  }
+  *{box-sizing:border-box;}
+  html,body{margin:0;height:100%;
+    font-family:"Microsoft YaHei","PingFang SC","Segoe UI",system-ui,sans-serif;}
+  body{
+    background:linear-gradient(160deg,var(--bg1),var(--bg2));
+    color:#eaf2ff;display:flex;flex-direction:column;height:100vh;overflow:hidden;
+  }
+  header{display:flex;align-items:center;justify-content:space-between;
+    padding:14px 18px;border-bottom:1px solid rgba(255,255,255,.08);}
+  .coins{font-size:18px;font-weight:700;color:var(--gold);display:flex;align-items:center;gap:8px;}
+  .coins .ico{width:18px;height:18px;border-radius:50%;
+    background:radial-gradient(circle at 30% 30%,#fff6c2,var(--gold));display:inline-block;
+    box-shadow:0 0 6px rgba(242,201,76,.6);}
+  .pool{font-size:13px;color:var(--muted);}
+  .tabs{display:flex;gap:8px;padding:12px 18px 0;}
+  .tab{padding:8px 22px;border:none;border-radius:10px 10px 0 0;cursor:pointer;
+    background:rgba(255,255,255,.08);color:#cfe0ff;font-size:14px;font-weight:600;
+    transition:background .15s,color .15s;}
+  .tab:hover{background:rgba(255,255,255,.16);}
+  .tab.active{background:var(--card);color:var(--ink);}
+  .panel{flex:1;overflow:auto;padding:16px 18px;display:none;}
+  .panel.active{display:block;}
+  .cols{display:grid;grid-template-columns:1fr 1fr;gap:16px;}
+  .box{background:var(--card);color:var(--ink);border-radius:14px;padding:14px;
+    box-shadow:0 8px 24px rgba(0,0,0,.25);}
+  .box h3{margin:0 0 10px;font-size:15px;color:var(--bg2);}
+  .item{display:flex;align-items:center;justify-content:space-between;padding:8px 10px;
+    border-radius:10px;background:#f3f7ff;margin-bottom:8px;}
+  .item .name{font-weight:600;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .item .price{color:var(--gold-ink);font-weight:700;margin:0 10px;white-space:nowrap;}
+  .item .price.gain{color:var(--green);}
+  button.act{border:none;border-radius:8px;padding:6px 14px;cursor:pointer;font-weight:600;
+    color:#fff;background:var(--gold-ink);transition:filter .15s;}
+  button.act:hover{filter:brightness(1.1);}
+  button.act:active{transform:translateY(1px);}
+  button.act.buy{background:#2f6fed;}
+  button.act.sell{background:var(--green);}
+  button.act.cannon{background:#2f6fed;width:100%;margin-bottom:8px;}
+  button.act.cannon.sel{outline:3px solid var(--gold);}
+  .empty{color:#9bb0d0;text-align:center;padding:18px 0;font-size:13px;}
+  .cannon-wrap{display:flex;justify-content:center;}
+  .cannon-card{background:var(--card);color:var(--ink);border-radius:16px;padding:22px;
+    width:340px;text-align:center;box-shadow:0 8px 24px rgba(0,0,0,.25);}
+  .cannon-card .lvl{font-size:22px;font-weight:800;color:var(--bg2);}
+  .cannon-card .sub{color:#5b7099;margin:6px 0 14px;font-size:13px;}
+  .cannon-card .refund{color:var(--green);font-size:13px;margin-bottom:14px;}
+  .mini{font-size:12px;color:#5b7099;margin:12px 0 6px;}
+  .toast{position:fixed;left:50%;top:18px;transform:translateX(-50%);
+    background:rgba(20,30,50,.85);backdrop-filter:blur(4px);color:#fff;
+    padding:10px 18px;border-radius:999px;font-size:14px;opacity:0;
+    transition:opacity .2s;pointer-events:none;z-index:9;}
+  .toast.show{opacity:1;}
+  ::-webkit-scrollbar{width:8px;}
+  ::-webkit-scrollbar-thumb{background:rgba(255,255,255,.25);border-radius:4px;}
+</style>
+</head>
+<body>
+  <header>
+    <div class="coins"><span class="ico"></span><span id="coins">金币：0</span></div>
+    <div class="pool" id="pool">鱼池 0/0</div>
+  </header>
+  <div class="tabs">
+    <button class="tab active" data-tab="fish" onclick="switchTab('fish')">🐟 鱼</button>
+    <button class="tab" data-tab="cannon" onclick="switchTab('cannon')">💥 炮台</button>
+  </div>
+  <div class="panel active" id="panel-fish">
+    <div class="cols">
+      <div class="box"><h3>购买（加入鱼池）</h3><div id="buyList"></div></div>
+      <div class="box"><h3>出售（鱼池现有）</h3><div id="sellList"></div></div>
+    </div>
+  </div>
+  <div class="panel" id="panel-cannon">
+    <div class="cannon-wrap"><div class="cannon-card" id="cannonCard"></div></div>
+  </div>
+  <div class="toast" id="toast"></div>
+
+<script>
+  let DATA = null;
+  let CUR_TAB = 'fish';
+
+  function toast(msg){
+    const t = document.getElementById('toast');
+    t.textContent = msg; t.classList.add('show');
+    clearTimeout(t._h); t._h = setTimeout(() => t.classList.remove('show'), 1500);
+  }
+
+  function esc(s){
+    return String(s).replace(/[&<>"]/g, c =>
+      ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+  }
+
+  function switchTab(tab){
+    CUR_TAB = tab;
+    document.querySelectorAll('.tab').forEach(b =>
+      b.classList.toggle('active', b.dataset.tab === tab));
+    document.querySelectorAll('.panel').forEach(p =>
+      p.classList.toggle('active', p.id === 'panel-' + tab));
+    if (DATA) render();
+  }
+
+  async function refreshShop(silent){
+    try{
+      DATA = await window.pywebview.api.get_data();
+      document.getElementById('coins').textContent = '金币：' + DATA.coins;
+      document.getElementById('pool').textContent =
+        '鱼池 ' + DATA.fish_count + '/' + DATA.max_fish;
+      render();
+      if (!silent) toast('已刷新');
+    }catch(e){ toast('加载失败：' + e); }
+  }
+
+  function render(){
+    if (!DATA) return;
+    if (CUR_TAB === 'fish') renderFish(); else renderCannon();
+  }
+
+  function renderFish(){
+    const buy = document.getElementById('buyList');
+    buy.innerHTML = '';
+    DATA.species.forEach(s => {
+      const row = document.createElement('div'); row.className = 'item';
+      const name = document.createElement('span'); name.className = 'name'; name.textContent = s.label;
+      const price = document.createElement('span'); price.className = 'price';
+      price.textContent = s.price + ' 金币';
+      const b = document.createElement('button'); b.className = 'act buy'; b.textContent = '购买';
+      b.onclick = () => doBuy(s.path);
+      row.appendChild(name); row.appendChild(price); row.appendChild(b);
+      buy.appendChild(row);
+    });
+    if (!DATA.species.length) buy.innerHTML = '<div class="empty">暂无可购买鱼类</div>';
+
+    const sell = document.getElementById('sellList');
+    sell.innerHTML = '';
+    if (!DATA.fishes.length){ sell.innerHTML = '<div class="empty">鱼池里还没有鱼</div>'; return; }
+    DATA.fishes.forEach(f => {
+      const row = document.createElement('div'); row.className = 'item';
+      const name = document.createElement('span'); name.className = 'name';
+      name.textContent = f.label + ' Lv' + f.level;
+      const price = document.createElement('span'); price.className = 'price gain';
+      price.textContent = '+' + f.price;
+      const b = document.createElement('button'); b.className = 'act sell'; b.textContent = '出售';
+      b.onclick = () => doSell(f.id);
+      row.appendChild(name); row.appendChild(price); row.appendChild(b);
+      sell.appendChild(row);
+    });
+  }
+
+  function renderCannon(){
+    const c = document.getElementById('cannonCard');
+    let html = '<div class="lvl">炮台 Lv' + DATA.cannon_level + ' / ' + DATA.cannon_max + '</div>';
+    if (DATA.cannon_level < DATA.cannon_max){
+      html += '<div class="sub">升级到 Lv' + (DATA.cannon_level + 1) +
+              ' 需要 ' + DATA.upgrade_cost + ' 金币</div>';
+      html += '<button class="act cannon" onclick="doUpgrade()">升级炮台</button>';
+    } else {
+      html += '<div class="sub">炮台已满级</div>';
+    }
+    if (DATA.cannon_level > 1){
+      html += '<div class="refund">出售炮台（降到 Lv' + (DATA.cannon_level - 1) +
+              '）返还 ' + DATA.sell_cannon_refund + ' 金币</div>';
+      html += '<button class="act cannon" style="background:#e07b39" onclick="doSellCannon()">出售炮台</button>';
+    } else {
+      html += '<div class="refund">炮台已是最低等级，无法出售</div>';
+    }
+    if (DATA.cannon_count > 0){
+      html += '<div class="mini">切换炮台型号（免费）</div>';
+      for (let i = 0; i < DATA.cannon_count; i++){
+        const sel = i === DATA.cannon_index ? ' sel' : '';
+        html += '<button class="act cannon' + sel + '" onclick="doSetCannon(' + i + ')">炮台 ' + (i + 1) + '</button>';
+      }
+    }
+    c.innerHTML = html;
+  }
+
+  async function doBuy(path){
+    const r = await window.pywebview.api.buy(path);
+    toast(r.msg); if (r.ok) refreshShop(true);
+  }
+  async function doSell(id){
+    const r = await window.pywebview.api.sell(id);
+    toast(r.msg); if (r.ok) refreshShop(true);
+  }
+  async function doUpgrade(){
+    const r = await window.pywebview.api.upgrade();
+    toast(r.msg); if (r.ok) refreshShop(true);
+  }
+  async function doSellCannon(){
+    const r = await window.pywebview.api.sell_cannon();
+    toast(r.msg); if (r.ok) refreshShop(true);
+  }
+  async function doSetCannon(idx){
+    const r = await window.pywebview.api.set_cannon(idx);
+    toast(r.msg); if (r.ok) refreshShop(true);
+  }
+
+  window.addEventListener('pywebviewready', () => refreshShop(true));
+</script>
+</body>
+</html>
