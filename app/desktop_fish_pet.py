@@ -90,6 +90,27 @@ RUN_KEY_PATH = r"Software\Microsoft\Windows\CurrentVersion\Run"
 RUN_VALUE_NAME = "DesktopFishPet"
 # 捕鱼经济：捕获奖励 = 鱼价值 × 炮台等级 × 该倍率（原为 ×1，低等级几乎不赚钱）
 REWARD_MULT = 5
+# 商城经济
+FISH_BUY_MULT = 12        # 买鱼价格 = 鱼价值 × 此倍数（下限见 fish_buy_price）
+FISH_SELL_RATE = 0.5      # 卖鱼返还 = 鱼价值 × 等级 × 此比例
+CANNON_UPGRADE_BASE = 200  # 炮台升到下一级花费 = 此基数 × 当前等级
+CANNON_SELL_RATE = 0.6     # 炮台降级返还 = 上一级升级花费 × 此比例
+CANNON_MAX_LEVEL = 7       # 炮台等级上限（与 load_config 的 min(7, …) 一致）
+
+# 鱼的基础价值（捕获奖励基数）与捕获率；商城买卖价格也基于此计算
+FISH_VALUE = {
+    # 常见小鱼：低倍率、高捕获率
+    "tianshiyu": (2, 0.55), "cheqiyu": (2, 0.55), "jinqiangyu": (3, 0.5),
+    "haima": (3, 0.45),
+    # 中等鱼
+    "chuitousha": (5, 0.35), "dalanjing": (6, 0.32), "shirenyu": (5, 0.38),
+    "huangjinsha": (6, 0.3), "dalansha": (5, 0.35), "hujing": (7, 0.28),
+    "jianchijing": (5, 0.35), "zhonghuahou": (6, 0.3),
+    # 大型 / 稀有鱼：高倍率、低捕获率
+    "jinlong": (20, 0.12), "leiyinlong": (20, 0.12), "jinlongyu": (18, 0.14),
+    "yaoqianshu": (30, 0.1), "zhangyu": (12, 0.2), "hanbingshuimu": (15, 0.18),
+    "jinshashuimu": (15, 0.18),
+}
 
       
 class POINT(ctypes.Structure):
@@ -1288,19 +1309,7 @@ class FishingOverlay:
             ty += 19
 
     # ---------- 逻辑 ----------
-    _FISH_VALUE = {
-        # 常见小鱼：低倍率、高捕获率
-        "tianshiyu": (2, 0.55), "cheqiyu": (2, 0.55), "jinqiangyu": (3, 0.5),
-        "haima": (3, 0.45),
-        # 中等鱼
-        "chuitousha": (5, 0.35), "dalanjing": (6, 0.32), "shirenyu": (5, 0.38),
-        "huangjinsha": (6, 0.3), "dalansha": (5, 0.35), "hujing": (7, 0.28),
-        "jianchijing": (5, 0.35), "zhonghuahou": (6, 0.3),
-        # 大型 / 稀有鱼：高倍率、低捕获率
-        "jinlong": (20, 0.12), "leiyinlong": (20, 0.12), "jinlongyu": (18, 0.14),
-        "yaoqianshu": (30, 0.1), "zhangyu": (12, 0.2), "hanbingshuimu": (15, 0.18),
-        "jinshashuimu": (15, 0.18),
-    }
+    _FISH_VALUE = FISH_VALUE  # 引用模块级鱼价表（单一来源）
 
     def _fish_info(self, fish):
         name = os.path.basename(fish.species[1])
@@ -1651,6 +1660,7 @@ class App:
                      lambda icon, item: self._invoke(self.toggle_berserk)),
             TrayItem("放一条小鱼", lambda icon, item: self._invoke(self.add_fish)),
             TrayItem("随机放几条鱼", lambda icon, item: self._invoke(self.add_fish_random)),
+            TrayItem("商城", lambda icon, item: self._invoke(self.open_shop)),
         ]
         if cannon_items:
             menu_items.append(TrayItem("更换炮台", TrayMenu(*cannon_items)))
@@ -1670,6 +1680,177 @@ class App:
     def _invoke(self, fn):
         """把托盘线程里的操作切回 tkinter 主线程执行。"""
         self.root.after(0, fn)
+
+    # ---------- 商城：UI ----------
+    def open_shop(self):
+        """打开商城窗口（须在主线程调用）。"""
+        win = getattr(self, "_shop_win", None)
+        if win is not None and win.winfo_exists():
+            win.lift()
+            win.attributes("-topmost", True)
+            self._refresh_shop()
+            return
+        win = tk.Toplevel(self.root)
+        win.title("商城")
+        win.attributes("-topmost", True)
+        win.resizable(False, False)
+        self._shop_win = win
+
+        top = tk.Frame(win)
+        top.pack(fill="x", padx=10, pady=8)
+        self._shop_coins = tk.StringVar(value="金币：%d" % self.coins)
+        tk.Label(top, textvariable=self._shop_coins,
+                 font=("Microsoft YaHei", 12, "bold"), fg="#c9962b").pack(side="left")
+        tk.Button(top, text="刷新", command=self._refresh_shop).pack(side="right")
+
+        tab_bar = tk.Frame(win)
+        tab_bar.pack(fill="x", padx=10)
+        self._shop_tab = tk.StringVar(value="fish")
+        fish_btn = tk.Button(tab_bar, text="鱼", width=12,
+                             command=lambda: self._switch_shop_tab("fish"))
+        cannon_btn = tk.Button(tab_bar, text="炮台", width=12,
+                               command=lambda: self._switch_shop_tab("cannon"))
+        fish_btn.pack(side="left", padx=2)
+        cannon_btn.pack(side="left", padx=2)
+        self._shop_tab_btns = {"fish": fish_btn, "cannon": cannon_btn}
+
+        self._shop_body = tk.Frame(win)
+        self._shop_body.pack(fill="both", expand=True, padx=10, pady=8)
+        self._switch_shop_tab("fish")
+
+    def _switch_shop_tab(self, tab):
+        self._shop_tab.set(tab)
+        for k, b in self._shop_tab_btns.items():
+            b.config(relief="sunken" if k == tab else "raised")
+        self._refresh_shop()
+
+    def _refresh_shop(self):
+        win = getattr(self, "_shop_win", None)
+        if win is None or not win.winfo_exists():
+            return
+        self._shop_coins.set("金币：%d" % self.coins)
+        for w in self._shop_body.winfo_children():
+            w.destroy()
+        if self._shop_tab.get() == "fish":
+            self._build_shop_fish()
+        else:
+            self._build_shop_cannon()
+
+    def _scroll_area(self, parent):
+        """在 parent 内创建带纵向滚动条的画布，返回用于放置内容的内部 Frame。"""
+        canvas = tk.Canvas(parent, borderwidth=0, highlightthickness=0)
+        sb = tk.Scrollbar(parent, orient="vertical", command=canvas.yview)
+        inner = tk.Frame(canvas)
+        inner.bind("<Configure>",
+                   lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
+        canvas.create_window((0, 0), window=inner, anchor="nw")
+        canvas.configure(yscrollcommand=sb.set)
+        canvas.pack(side="left", fill="both", expand=True)
+        sb.pack(side="right", fill="y")
+        return inner
+
+    def _build_shop_fish(self):
+        body = self._shop_body
+        buy_frame = tk.LabelFrame(body, text="购买（加入鱼池）", padx=6, pady=6)
+        buy_frame.pack(side="left", fill="both", expand=True, padx=(0, 5))
+        buy_inner = self._scroll_area(buy_frame)
+        for label, path in self.species_list:
+            name = os.path.basename(path)
+            price = self.fish_buy_price(name)
+            row = tk.Frame(buy_inner)
+            row.pack(fill="x", pady=2)
+            tk.Label(row, text=label, width=12, anchor="w").pack(side="left")
+            tk.Label(row, text="%d 金币" % price, fg="#c9962b", width=10).pack(side="left")
+            tk.Button(row, text="购买", width=6,
+                      command=lambda p=path, pr=price: self._shop_buy(p, pr)).pack(side="right")
+
+        sell_frame = tk.LabelFrame(body, text="出售（鱼池现有）", padx=6, pady=6)
+        sell_frame.pack(side="right", fill="both", expand=True, padx=(5, 0))
+        sell_inner = self._scroll_area(sell_frame)
+        if not self.fishes:
+            tk.Label(sell_inner, text="鱼池里还没有鱼").pack(pady=10)
+        for f in list(self.fishes):
+            label = f.species[0]
+            price = self.fish_sell_price(f)
+            row = tk.Frame(sell_inner)
+            row.pack(fill="x", pady=2)
+            tk.Label(row, text="%s Lv%d" % (label, f.level), width=14, anchor="w").pack(side="left")
+            tk.Label(row, text="+%d" % price, fg="#2c9e4b", width=8).pack(side="left")
+            tk.Button(row, text="出售", width=6,
+                      command=lambda fish=f, pr=price: self._shop_sell(fish, pr)).pack(side="right")
+
+    def _build_shop_cannon(self):
+        body = self._shop_body
+        f = tk.LabelFrame(body, text="炮台", padx=10, pady=10)
+        f.pack(fill="both", expand=True)
+        tk.Label(f, text="当前炮台等级：Lv%d / %d" % (self.cannon_level, CANNON_MAX_LEVEL),
+                 font=("Microsoft YaHei", 11, "bold")).pack(pady=4)
+        if self.cannon_level < CANNON_MAX_LEVEL:
+            cost = self.cannon_upgrade_cost()
+            tk.Label(f, text="升级到 Lv%d 需要 %d 金币" % (self.cannon_level + 1, cost)).pack(pady=2)
+            tk.Button(f, text="升级炮台", width=16,
+                      command=lambda c=cost: self._shop_upgrade(c)).pack(pady=4)
+        else:
+            tk.Label(f, text="炮台已满级").pack(pady=4)
+        if self.cannon_level > 1:
+            refund = int(CANNON_UPGRADE_BASE * (self.cannon_level - 1) * CANNON_SELL_RATE)
+            tk.Label(f, text="出售炮台（降到 Lv%d）返还 %d 金币"
+                           % (self.cannon_level - 1, refund)).pack(pady=2)
+            tk.Button(f, text="出售炮台", width=16,
+                      command=lambda r=refund: self._shop_sell_cannon(r)).pack(pady=4)
+        else:
+            tk.Label(f, text="炮台已是最低等级，无法出售").pack(pady=4)
+        tk.Label(f, text="切换炮台型号（免费）", fg="#888").pack(pady=(10, 2))
+        for i in range(len(find_cannons())):
+            tk.Button(f, text="炮台 %d" % (i + 1), width=16,
+                      command=lambda idx=i: self._shop_set_cannon(idx)).pack(pady=2)
+
+    def _shop_buy(self, path, price):
+        if self.coins < price:
+            self._shop_toast("金币不足"); return
+        if len(self.fishes) >= self.max_fish:
+            self._shop_toast("鱼池已满（%d 条）" % self.max_fish); return
+        sp = next((s for s in self.species_list if s[1] == path), None)
+        if sp is None:
+            return
+        self.coins -= price
+        self.add_fish_species(sp)
+        self.sounds.play("poke")
+        self._refresh_shop()
+
+    def _shop_sell(self, fish, price):
+        if fish not in self.fishes:
+            return
+        self.sell_fish(fish)
+        self.sounds.play("catch")
+        self._refresh_shop()
+
+    def _shop_upgrade(self, cost):
+        if self.coins < cost:
+            self._shop_toast("金币不足"); return
+        if not self.upgrade_cannon():
+            return
+        self.sounds.play("levelup")
+        self._refresh_shop()
+
+    def _shop_sell_cannon(self, refund):
+        self.sell_cannon()
+        self.sounds.play("catch")
+        self._refresh_shop()
+
+    def _shop_set_cannon(self, idx):
+        self.set_cannon(idx)
+        self._refresh_shop()
+
+    def _shop_toast(self, msg):
+        win = getattr(self, "_shop_win", None)
+        if win is None or not win.winfo_exists():
+            return
+        top = tk.Toplevel(win)
+        top.title("提示")
+        top.attributes("-topmost", True)
+        tk.Label(top, text=msg, padx=20, pady=12).pack()
+        top.after(1200, top.destroy)
 
     def toggle_pause(self):
         self.paused = not self.paused
@@ -1883,6 +2064,64 @@ class App:
             self.fish_info.hide(fish, immediate=True)
             fish.destroy()
             self.save_config()
+
+    # ---------- 商城：买卖逻辑 ----------
+    def add_fish_species(self, sp, scale=None):
+        """购买指定品种的鱼并加入鱼池（sp 为 (显示名, 目录)）。"""
+        if scale is None:
+            scale = App.SCALES[0][1]
+        L, T, R, B = self.roam
+        w, h = self._species_size(sp, scale)
+        x = random.uniform(L + 50, max(L + 51, R - w))
+        y = random.uniform(T + 50, max(T + 51, B - h))
+        self.fishes.append(Fish(self, sp, scale, x, y))
+        self.save_config()
+
+    def fish_buy_price(self, name):
+        """买鱼价格：鱼基础价值 × 倍数，下限 20。name 为鱼目录名。"""
+        value = FISH_VALUE.get(name, (5, 0.25))[0]
+        return max(20, int(value * FISH_BUY_MULT))
+
+    def fish_sell_price(self, fish):
+        """卖鱼返还：鱼基础价值 × 当前等级 × 比例。"""
+        name = os.path.basename(fish.species[1])
+        value = FISH_VALUE.get(name, (5, 0.25))[0]
+        return max(5, int(value * fish.level * FISH_SELL_RATE))
+
+    def sell_fish(self, fish):
+        """出售一条鱼：移除并返还金币，返回返还数额。"""
+        if fish not in self.fishes:
+            return 0
+        price = self.fish_sell_price(fish)
+        self.coins += price
+        self.remove_fish(fish)
+        return price
+
+    def cannon_upgrade_cost(self):
+        """升到下一级所需金币。"""
+        return CANNON_UPGRADE_BASE * self.cannon_level
+
+    def upgrade_cannon(self):
+        """升级炮台一级（扣除金币），成功返回 True。"""
+        if self.cannon_level >= CANNON_MAX_LEVEL:
+            return False
+        cost = self.cannon_upgrade_cost()
+        if self.coins < cost:
+            return False
+        self.coins -= cost
+        self.cannon_level += 1
+        self.save_config()
+        return True
+
+    def sell_cannon(self):
+        """出售炮台：降级一级并返还部分金币，返回返还数额。"""
+        if self.cannon_level <= 1:
+            return 0
+        refund = int(CANNON_UPGRADE_BASE * (self.cannon_level - 1) * CANNON_SELL_RATE)
+        self.coins += refund
+        self.cannon_level -= 1
+        self.save_config()
+        return refund
 
     # ---------- 鱼信息浮层 ----------
     def show_fish_info(self, fish):
