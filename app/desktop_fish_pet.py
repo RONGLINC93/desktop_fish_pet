@@ -96,7 +96,7 @@ RUN_VALUE_NAME = "DesktopFishPet"
 # 捕鱼经济：捕获奖励 = 鱼价值 × 炮台等级 × 该倍率（原为 ×1，低等级几乎不赚钱）
 REWARD_MULT = 5
 # 商城经济
-FISH_BUY_MULT = 12        # 买鱼价格 = 鱼价值 × 此倍数（下限见 fish_buy_price）
+FISH_BUY_MULT = 2         # 买鱼价格 = 鱼价值 × 此倍数（下限见 fish_buy_price）；大幅下调让买鱼轻松
 FISH_SELL_RATE = 1.8      # 卖鱼返还 = 鱼价值 × 等级 × 此比例（养大才能赚钱）
 CANNON_UPGRADE_BASE = 200  # 炮台升到下一级花费 = 此基数 × 当前等级
 CANNON_SELL_RATE = 0.6     # 炮台降级返还 = 上一级升级花费 × 此比例
@@ -691,7 +691,7 @@ class Fish:
         else:
             self.growth = 1.0
 
-        # 繁殖：成年鱼每隔一段时间在附近生一条小鱼（受鱼池上限约束）
+        # 繁殖：成年鱼每隔一段时间在附近随机繁殖若干条小鱼（受鱼池上限约束，不消耗金币）
         if self.is_mature():
             self.breed_timer -= dt
             if self.breed_timer <= 0 and len(self.app.fishes) < self.app.max_fish:
@@ -1889,7 +1889,7 @@ class App:
 
         menu.add_separator()
         if fish.is_mature():
-            menu.add_command(label="生一条小鱼", command=lambda: self.breed_fish(fish))
+            menu.add_command(label="繁殖小鱼", command=lambda: self.breed_fish(fish))
         menu.add_command(label="放一条小鱼", command=self.add_fish)
         menu.add_command(label="随机放几条鱼", command=self.add_fish_random)
         if len(self.fishes) > 1:
@@ -1914,32 +1914,36 @@ class App:
                 break
 
     def breed_fish(self, parent):
-        """成年鱼生一条小鱼（同品种、1 级、很小，出现在父鱼附近）。
-        按商城买价扣金币；金币不足或鱼池已满则返回 None。"""
+        """成年鱼繁殖小鱼（同品种、1 级、很小，出现在父鱼附近）。
+        随机繁殖 1~4 条，仅受鱼池上限约束，自然繁殖不消耗金币。"""
         if len(self.fishes) >= self.max_fish:
             return None
-        name = os.path.basename(parent.species[1])
-        if self.coins < self.fish_buy_price(name):
-            return None
-        self.coins -= self.fish_buy_price(name)
         L, T, R, B = self.roam  # 鱼在虚拟桌面内生成/收拢（跨屏）
         baby_scale = App.SCALES[0][1]  # 很小
         w, h = self._species_size(parent.species, baby_scale)
-        cx = parent.x + parent.w / 2 + random.uniform(-90, 90)
-        cy = parent.y + parent.h / 2 + random.uniform(-70, 70)
-        bx = max(L, min(cx - w / 2, R - w))
-        by = max(T, min(cy - h / 2, B - h))
-        baby = Fish(self, parent.species, baby_scale, bx, by, level=1, growth=0.0)
-        self.fishes.append(baby)
+        count = random.randint(1, 4)
+        born = 0
+        for _ in range(count):
+            if len(self.fishes) >= self.max_fish:
+                break
+            cx = parent.x + parent.w / 2 + random.uniform(-90, 90)
+            cy = parent.y + parent.h / 2 + random.uniform(-70, 70)
+            bx = max(L, min(cx - w / 2, R - w))
+            by = max(T, min(cy - h / 2, B - h))
+            baby = Fish(self, parent.species, baby_scale, bx, by, level=1, growth=0.0)
+            self.fishes.append(baby)
+            born += 1
+        if born == 0:
+            return None
         self.sounds.play("birth")
         # 捕鱼模式下弹个提示；普通模式有新鱼出现 + 音效作为反馈
         if self.fishing_overlay is not None:
             self.fishing_overlay.floaters.append({
                 "x": parent.x + parent.w / 2, "y": parent.y - 22,
-                "text": "生了小鱼!", "t": 0.0, "life": 1.2, "vy": 40,
+                "text": "繁殖了%d条小鱼!" % born, "t": 0.0, "life": 1.2, "vy": 40,
                 "color": (255, 205, 120)})
         self.save_config()
-        return baby
+        return True
 
     def remove_fish(self, fish):
         if fish in self.fishes:
@@ -1978,9 +1982,9 @@ class App:
         return self._spawn_fish(sp, scale=scale, charge=True)
 
     def fish_buy_price(self, name):
-        """买鱼价格：鱼基础价值 × 倍数，下限 20。name 为鱼目录名。"""
+        """买鱼价格：鱼基础价值 × 倍数，下限 5。name 为鱼目录名。"""
         value = FISH_VALUE.get(name, (5, 0.25))[0]
-        return max(20, int(value * FISH_BUY_MULT))
+        return max(5, int(value * FISH_BUY_MULT))
 
     def fish_sell_price(self, fish):
         """卖鱼返还：鱼基础价值 × 当前等级 × 比例。"""
