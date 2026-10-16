@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>设置</title>
+<style>
+  :root{
+    --bg1:#0b2545; --bg2:#13315c; --card:#ffffff; --ink:#13315c;
+    --gold:#f2c94c; --gold-ink:#9a6b00; --green:#27ae60; --muted:#8aa0c0;
+    --blue:#2f6fed; --red:#e0524d;
+  }
+  *{box-sizing:border-box;}
+  html,body{margin:0;height:100%;
+    font-family:"Microsoft YaHei","PingFang SC","Segoe UI",system-ui,sans-serif;}
+  body{
+    background:linear-gradient(160deg,var(--bg1),var(--bg2));
+    color:#eaf2ff;display:flex;flex-direction:column;height:100vh;overflow:hidden;
+  }
+  header{display:flex;align-items:center;justify-content:space-between;
+    padding:14px 18px;border-bottom:1px solid rgba(255,255,255,.08);}
+  header h1{margin:0;font-size:18px;font-weight:700;display:flex;align-items:center;gap:8px;}
+  .pool{font-size:13px;color:var(--muted);}
+  .body{flex:1;overflow:auto;padding:14px 18px;}
+  .box{background:var(--card);color:var(--ink);border-radius:14px;padding:14px;
+    box-shadow:0 8px 24px rgba(0,0,0,.25);margin-bottom:14px;}
+  .box h3{margin:0 0 10px;font-size:15px;color:var(--bg2);}
+  .item{display:flex;align-items:center;justify-content:space-between;padding:9px 10px;
+    border-radius:10px;background:#f3f7ff;margin-bottom:8px;}
+  .item .name{font-weight:600;flex:1;}
+  .item .hint{font-size:12px;color:#5b7099;margin-left:8px;}
+  .tg{border:none;border-radius:999px;padding:6px 18px;cursor:pointer;font-weight:700;
+    color:#fff;background:#9bb0d0;min-width:56px;transition:filter .15s,background .15s;}
+  .tg.on{background:var(--green);}
+  .tg:active{transform:translateY(1px);}
+  .chips{display:flex;flex-wrap:wrap;gap:8px;}
+  .chip{border:none;border-radius:10px;padding:8px 14px;cursor:pointer;font-weight:600;
+    color:var(--ink);background:#eaf0fb;transition:filter .15s;}
+  .chip:hover{filter:brightness(.97);}
+  .chip.sel{background:var(--gold);color:var(--gold-ink);}
+  .chip.sel-cannon{outline:3px solid var(--gold);}
+  .btn{border:none;border-radius:10px;padding:9px 16px;cursor:pointer;font-weight:600;
+    color:#fff;background:var(--blue);transition:filter .15s;margin-right:8px;}
+  .btn:hover{filter:brightness(1.08);}
+  .btn:active{transform:translateY(1px);}
+  .btn.wide{width:100%;margin:0 0 8px;}
+  .btn.quit{background:var(--red);width:100%;margin-top:4px;}
+  .toast{position:fixed;left:50%;top:18px;transform:translateX(-50%);
+    background:rgba(20,30,50,.85);backdrop-filter:blur(4px);color:#fff;
+    padding:10px 18px;border-radius:999px;font-size:14px;opacity:0;
+    transition:opacity .2s;pointer-events:none;z-index:9;}
+  .toast.show{opacity:1;}
+  ::-webkit-scrollbar{width:8px;}
+  ::-webkit-scrollbar-thumb{background:rgba(255,255,255,.25);border-radius:4px;}
+</style>
+</head>
+<body>
+  <header>
+    <h1>⚙ 设置</h1>
+    <div class="pool" id="pool">鱼池 0/0</div>
+  </header>
+  <div class="body">
+    <div class="box"><h3>通用设置</h3><div id="switches"></div></div>
+    <div class="box"><h3>鱼池上限</h3><div class="chips" id="maxfish"></div></div>
+    <div class="box"><h3>炮台皮肤</h3><div class="chips" id="cannons"></div></div>
+    <div class="box"><h3>鱼池管理</h3>
+      <button class="btn" onclick="doAdd()">放一条小鱼</button>
+      <button class="btn" onclick="doAddRandom()">随机放几条鱼</button>
+    </div>
+    <button class="btn quit" onclick="doQuit()">退出程序</button>
+  </div>
+  <div class="toast" id="toast"></div>
+
+<script>
+  let DATA = null;
+
+  const SW = [
+    {key:'paused',         label:'暂停游动', api:'toggle_pause'},
+    {key:'show_fish',      label:'显示小鱼', api:'toggle_hide'},
+    {key:'fishing',        label:'捕鱼模式', api:'toggle_fishing'},
+    {key:'sound_enabled',  label:'音效',     api:'toggle_sound'},
+    {key:'autostart',      label:'开机自启', api:'toggle_autostart'},
+    {key:'cross_screen',   label:'跨屏游走', api:'toggle_cross_screen'},
+    {key:'berserk_enabled',label:'狂暴模式', api:'toggle_berserk'},
+  ];
+
+  function toast(msg){
+    const t = document.getElementById('toast');
+    t.textContent = msg; t.classList.add('show');
+    clearTimeout(t._h); t._h = setTimeout(() => t.classList.remove('show'), 1500);
+  }
+
+  async function refreshSettings(silent){
+    try{
+      DATA = await window.pywebview.api.get_settings();
+      document.getElementById('pool').textContent =
+        '鱼池 ' + DATA.fish_count + '/' + DATA.max_fish;
+      render();
+      if (!silent) toast('已刷新');
+    }catch(e){ toast('加载失败：' + e); }
+  }
+
+  function render(){
+    if (!DATA) return;
+    // 开关
+    const sw = document.getElementById('switches');
+    sw.innerHTML = '';
+    SW.forEach(s => {
+      const on = !!DATA[s.key];
+      const row = document.createElement('div'); row.className = 'item';
+      const name = document.createElement('span'); name.className = 'name';
+      name.textContent = s.label;
+      const b = document.createElement('button');
+      b.className = 'tg ' + (on ? 'on' : '');
+      b.textContent = on ? '开' : '关';
+      b.onclick = () => callApi(s.api);
+      row.appendChild(name); row.appendChild(b);
+      sw.appendChild(row);
+    });
+    // 鱼池上限
+    const mf = document.getElementById('maxfish');
+    mf.innerHTML = '';
+    DATA.max_fish_choices.forEach(n => {
+      const b = document.createElement('button');
+      b.className = 'chip' + (n === DATA.max_fish ? ' sel' : '');
+      b.textContent = n + ' 条';
+      b.onclick = () => callApi('set_max_fish', n);
+      mf.appendChild(b);
+    });
+    // 炮台皮肤
+    const cn = document.getElementById('cannons');
+    cn.innerHTML = '';
+    if (DATA.cannon_count === 0){
+      cn.innerHTML = '<span class="hint">未找到炮台素材</span>';
+    }
+    for (let i = 0; i < DATA.cannon_count; i++){
+      const b = document.createElement('button');
+      b.className = 'chip' + (i === DATA.cannon_index ? ' sel-cannon' : '');
+      b.textContent = '炮台 ' + (i + 1);
+      b.onclick = () => callApi('set_cannon', i);
+      cn.appendChild(b);
+    }
+  }
+
+  async function callApi(method, arg){
+    try{
+      const api = window.pywebview.api;
+      const r = arg === undefined
+        ? await api[method]()
+        : await api[method](arg);
+      if (r && r.msg) toast(r.msg);
+      if (!r || r.ok !== false) refreshSettings(true);
+    }catch(e){ toast('操作失败：' + e); }
+  }
+
+  async function doAdd(){ await callApi('add_fish'); }
+  async function doAddRandom(){ await callApi('add_fish_random'); }
+  async function doQuit(){ await callApi('quit'); }
+
+  window.addEventListener('pywebviewready', () => refreshSettings(true));
+</script>
+</body>
+</html>

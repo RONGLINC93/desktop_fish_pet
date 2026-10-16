@@ -1640,44 +1640,17 @@ class App:
             icon_img = make_tray_icon()
         except Exception:
             icon_img = Image.new("RGBA", (64, 64), (0, 120, 215, 255))
-        def _make_action(k):
-            return lambda icon, item: self._invoke(lambda: self.set_cannon(k))
-        cannon_items = []
-        for i in range(len(find_cannons())):
-            cannon_items.append(
-                TrayItem("炮台 %d" % (i + 1),
-                         _make_action(i),
-                         checked=(lambda item, k=i: self.cannon_index == k)))
         menu_items = [
             TrayItem(lambda item: "暂停游动" if not self.paused else "继续游动",
                      lambda icon, item: self._invoke(self.toggle_pause)),
-            TrayItem(lambda item: "收进托盘" if not self.hidden else "放出小鱼",
-                     lambda icon, item: self._invoke(self.toggle_hide)),
-            TrayItem(lambda item: "捕鱼模式" if not self.fishing else "退出捕鱼",
-                     lambda icon, item: self._invoke(self.toggle_fishing)),
-            TrayItem(lambda item: "音效：开" if self.sound_enabled else "音效：关",
-                     lambda icon, item: self._invoke(self.toggle_sound)),
-            TrayItem(lambda item: "开机自启：开" if self.is_autostart_enabled() else "开机自启：关",
-                     lambda icon, item: self._invoke(self.toggle_autostart)),
-            TrayItem(lambda item: "跨屏游走：开" if self.cross_screen else "跨屏游走：关",
-                     lambda icon, item: self._invoke(self.toggle_cross_screen)),
-            TrayItem(lambda item: "狂暴模式：开" if self.berserk_enabled else "狂暴模式：关",
-                     lambda icon, item: self._invoke(self.toggle_berserk)),
-            TrayItem("放一条小鱼", lambda icon, item: self._invoke(self.add_fish)),
-            TrayItem("随机放几条鱼", lambda icon, item: self._invoke(self.add_fish_random)),
+            TrayItem("鱼池管理", TrayMenu(
+                TrayItem("放一条小鱼", lambda icon, item: self._invoke(self.add_fish)),
+                TrayItem("随机放几条鱼", lambda icon, item: self._invoke(self.add_fish_random)),
+            )),
+            TrayItem("设置", lambda icon, item: self._invoke(self.open_settings)),
             TrayItem("商城", lambda icon, item: self._invoke(self.open_shop)),
+            TrayItem("退出", lambda icon, item: self._invoke(self.quit)),
         ]
-        if cannon_items:
-            menu_items.append(TrayItem("更换炮台", TrayMenu(*cannon_items)))
-        def _make_maxfish_action(v):
-            return lambda icon, item: self._invoke(lambda: self.set_max_fish(v))
-        maxfish_items = [
-            TrayItem("%d 条" % n, _make_maxfish_action(n),
-                     checked=(lambda item, v=n: self.max_fish == v))
-            for n in MAX_FISH_CHOICES
-        ]
-        menu_items.append(TrayItem("最大鱼数", TrayMenu(*maxfish_items)))
-        menu_items.append(TrayItem("退出", lambda icon, item: self._invoke(self.quit)))
         menu = TrayMenu(*menu_items)
         self.tray = TrayIcon("desk_fish", icon_img, "桌面小鱼", menu)
         self.tray.run_detached()
@@ -1725,6 +1698,49 @@ class App:
             import tkinter.messagebox as mb
             mb.showinfo("商城",
                         "商城界面需要 pywebview 才能以网页形式打开。\n"
+                        "请先安装依赖：pip install pywebview")
+        except Exception:
+            pass
+
+    # ---------- 设置：HTML（pywebview） ----------
+    def open_settings(self):
+        """打开设置窗口（HTML 界面，由主线程的 pywebview 宿主渲染）。"""
+        if webview is None:
+            self._settings_fallback()
+            return
+        # 窗口已开：刷新数据并置顶
+        win = getattr(self, "_settings_window", None)
+        if win is not None and getattr(win, "_alive", False):
+            try:
+                win.evaluate_js("refreshSettings(true)")
+            except Exception:
+                pass
+            return
+
+        api = SettingsAPI(self)
+        self._settings_api = api
+        html = load_settings_html()
+        w = webview.create_window(
+            "设置", html=html, js_api=api,
+            width=520, height=660, resizable=False, on_top=True,
+        )
+        self._settings_window = w
+        w._alive = True
+        w.events.closed += lambda *a: self._on_settings_closed()
+
+    def _on_settings_closed(self, *args):
+        """设置窗口被关闭时，复位状态以便下次重新打开。"""
+        w = getattr(self, "_settings_window", None)
+        if w is not None:
+            w._alive = False
+        self._settings_window = None
+
+    def _settings_fallback(self):
+        """未安装 pywebview 时的降级提示。"""
+        try:
+            import tkinter.messagebox as mb
+            mb.showinfo("设置",
+                        "设置界面需要 pywebview 才能以网页形式打开。\n"
                         "请先安装依赖：pip install pywebview")
         except Exception:
             pass
@@ -2124,16 +2140,62 @@ class ShopAPI:
         return self._run_on_main(self._collect)
 
     def _collect(self):
+        import base64
+        import io
         app = self.app
+
+        gif_cache = {}
+
+        def fish_gif(dir_path):
+            """把鱼的 PNG 帧序列合成为一段循环 GIF（data URI），供前端 <img> 播放。
+            鱼素材是 Resources/ 下的帧 PNG，需要合成 GIF 才能在前端动起来。"""
+            if not dir_path:
+                return ""
+            if dir_path in gif_cache:
+                return gif_cache[dir_path]
+            uri = ""
+            try:
+                res = os.path.join(dir_path, "Resources")
+                if os.path.isdir(res):
+                    pairs = []
+                    for f in os.listdir(res):
+                        m = re.search(r"[_-](\d{2})\.png$", f, re.I)
+                        if m:
+                            pairs.append((int(m.group(1)), f))
+                    pairs.sort()
+                    if pairs:
+                        imgs = []
+                        for _, fn in pairs:
+                            im = Image.open(os.path.join(res, fn)).convert("RGBA")
+                            if im.height > 0:
+                                scale = 56.0 / im.height
+                                imgs.append(im.resize(
+                                    (max(1, round(im.width * scale)), 56),
+                                    Image.LANCZOS))
+                        if imgs:
+                            buf = io.BytesIO()
+                            imgs[0].save(buf, format="GIF", save_all=True,
+                                         append_images=imgs[1:], duration=80,
+                                         loop=0, disposal=2)
+                            uri = "data:image/gif;base64," + base64.b64encode(
+                                buf.getvalue()).decode("ascii")
+            except Exception:
+                uri = ""
+            gif_cache[dir_path] = uri
+            return uri
+
         species = []
         for label, path in app.species_list:
             name = os.path.basename(path)
             species.append({"label": label, "path": path,
-                            "price": app.fish_buy_price(name)})
+                            "price": app.fish_buy_price(name),
+                            "gif": fish_gif(path)})
         fishes = []
         for f in list(app.fishes):
-            fishes.append({"id": id(f), "label": f.species[0],
-                           "level": f.level, "price": app.fish_sell_price(f)})
+            sp = f.species
+            fishes.append({"id": id(f), "label": sp[0],
+                           "level": f.level, "price": app.fish_sell_price(f),
+                           "gif": fish_gif(sp[1])})
         return {
             "coins": app.coins,
             "max_fish": app.max_fish,
@@ -2210,6 +2272,122 @@ class ShopAPI:
     def _set_cannon(self, idx):
         self.app.set_cannon(int(idx))
         return {"ok": True, "msg": "已切换炮台"}
+
+
+# ---------------------------------------------------------------- 设置 HTML 桥接
+def load_settings_html():
+    """读取设置页面（自包含的 HTML/CSS/JS）。"""
+    path = os.path.join(BASE_DIR, "settings.html")
+    with open(path, "r", encoding="utf-8") as fp:
+        return fp.read()
+
+
+class SettingsAPI:
+    """设置页与前端 HTML/JS 的桥接层（pywebview 的 js_api）。
+    所有读写都切回 tkinter 主线程执行，避免跨线程操作 Tk。"""
+
+    def __init__(self, app):
+        self.app = app
+
+    def _run_on_main(self, fn):
+        """在 tkinter 主线程执行 fn，等待完成并返回其结果。"""
+        box, done = {}, threading.Event()
+
+        def _task():
+            try:
+                box["r"] = fn()
+            except Exception as e:  # noqa: BLE001
+                box["r"] = {"ok": False, "msg": "操作失败：%s" % e}
+            done.set()
+
+        self.app.root.after(0, _task)
+        done.wait()
+        return box.get("r")
+
+    # ---------- 只读：一次性取回全部设置 ----------
+    def get_settings(self):
+        return self._run_on_main(self._collect)
+
+    def _collect(self):
+        app = self.app
+        return {
+            "coins": app.coins,
+            "fish_count": len(app.fishes),
+            "max_fish": app.max_fish,
+            "max_fish_choices": list(MAX_FISH_CHOICES),
+            "paused": app.paused,
+            "show_fish": not app.hidden,
+            "fishing": app.fishing,
+            "sound_enabled": app.sound_enabled,
+            "autostart": app.is_autostart_enabled(),
+            "cross_screen": app.cross_screen,
+            "berserk_enabled": app.berserk_enabled,
+            "cannon_index": app.cannon_index,
+            "cannon_count": len(find_cannons()),
+        }
+
+    # ---------- 写操作 ----------
+    def _toggle(self, name):
+        getattr(self.app, name)()
+        return {"ok": True, "msg": "已切换"}
+
+    def toggle_pause(self):
+        return self._run_on_main(lambda: self._toggle("toggle_pause"))
+
+    def toggle_hide(self):
+        return self._run_on_main(lambda: self._toggle("toggle_hide"))
+
+    def toggle_fishing(self):
+        return self._run_on_main(lambda: self._toggle("toggle_fishing"))
+
+    def toggle_sound(self):
+        return self._run_on_main(lambda: self._toggle("toggle_sound"))
+
+    def toggle_autostart(self):
+        return self._run_on_main(lambda: self._toggle("toggle_autostart"))
+
+    def toggle_cross_screen(self):
+        return self._run_on_main(lambda: self._toggle("toggle_cross_screen"))
+
+    def toggle_berserk(self):
+        return self._run_on_main(lambda: self._toggle("toggle_berserk"))
+
+    def set_max_fish(self, v):
+        def _t():
+            self.app.set_max_fish(int(v))
+            return {"ok": True, "msg": "已设置上限 %d 条" % int(v)}
+        return self._run_on_main(_t)
+
+    def set_cannon(self, idx):
+        def _t():
+            self.app.set_cannon(int(idx))
+            return {"ok": True, "msg": "已切换炮台"}
+        return self._run_on_main(_t)
+
+    def add_fish(self):
+        def _t():
+            before = len(self.app.fishes)
+            self.app.add_fish()
+            after = len(self.app.fishes)
+            return {"ok": after > before,
+                    "msg": "已添加小鱼" if after > before else "鱼池已满或金币不足"}
+        return self._run_on_main(_t)
+
+    def add_fish_random(self):
+        def _t():
+            before = len(self.app.fishes)
+            self.app.add_fish_random()
+            after = len(self.app.fishes)
+            return {"ok": after > before,
+                    "msg": ("已随机添加 %d 条" % (after - before))
+                           if after > before else "鱼池已满或金币不足"}
+        return self._run_on_main(_t)
+
+    def quit(self):
+        def _t():
+            self.app.quit()
+            return {"ok": True}
+        return self._run_on_main(_t)
 
 
 def _app_thread():

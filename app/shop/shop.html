@@ -37,6 +37,7 @@
   .box h3{margin:0 0 10px;font-size:15px;color:var(--bg2);}
   .item{display:flex;align-items:center;justify-content:space-between;padding:8px 10px;
     border-radius:10px;background:#f3f7ff;margin-bottom:8px;}
+  .fish-anim{width:54px;height:54px;object-fit:contain;flex:0 0 auto;margin-right:6px;}
   .item .name{font-weight:600;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
   .item .price{color:var(--gold-ink);font-weight:700;margin:0 10px;white-space:nowrap;}
   .item .price.gain{color:var(--green);}
@@ -130,6 +131,11 @@
     buy.innerHTML = '';
     DATA.species.forEach(s => {
       const row = document.createElement('div'); row.className = 'item';
+      if (s.gif) {
+        const img = document.createElement('img'); img.className = 'fish-anim';
+        img.src = s.gif; img.alt = s.label;
+        row.appendChild(img);
+      }
       const name = document.createElement('span'); name.className = 'name'; name.textContent = s.label;
       const price = document.createElement('span'); price.className = 'price';
       price.textContent = s.price + ' 金币';
@@ -145,6 +151,11 @@
     if (!DATA.fishes.length){ sell.innerHTML = '<div class="empty">鱼池里还没有鱼</div>'; return; }
     DATA.fishes.forEach(f => {
       const row = document.createElement('div'); row.className = 'item';
+      if (f.gif) {
+        const img = document.createElement('img'); img.className = 'fish-anim';
+        img.src = f.gif; img.alt = f.label;
+        row.appendChild(img);
+      }
       const name = document.createElement('span'); name.className = 'name';
       name.textContent = f.label + ' Lv' + f.level;
       const price = document.createElement('span'); price.className = 'price gain';
