@@ -530,24 +530,24 @@ def draw_fish_info_card(img, draw, fish, x, y, font):
     def _right(text, by, fill):
         _shadow_text(x + cw - 8 - _tw(text), by, text, fill)
 
-    def _center_bar(text, by, fill):
-        _shadow_text(int(bx + bw / 2 - _tw(text) / 2), by, text, fill)
+    def _center(text, by, fill):
+        _shadow_text(bx + bw / 2 - _tw(text) / 2, by, text, fill)
 
-    # 成长（带百分比）
+    # 成长（带百分比，文字居中在进度条上）
     growth = getattr(fish, "growth", 0.0)
     _shadow_text(x + 18, y + 30, "成长", (185, 215, 255))
     _bar(y + 31, growth, (115, 220, 145))
-    _center_bar("%d%%" % int(growth * 100), y + 30, (200, 255, 210))
+    _center("%d%%" % int(growth * 100), y + 30, (200, 255, 210))
 
-    # HP（带数值）
+    # HP（带数值，文字居中在进度条上）
     hp = getattr(fish, "hp", 1)
     maxhp = getattr(fish, "max_hp", 1)
     hpr = hp / max(1, maxhp)
     _shadow_text(x + 18, y + 50, "HP", (255, 160, 150))
     _bar(y + 51, hpr, (235, 85, 75))
-    _center_bar("%d/%d" % (int(hp), int(maxhp)), y + 50, (255, 200, 190))
+    _center("%d/%d" % (int(hp), int(maxhp)), y + 50, (255, 200, 190))
 
-    # 繁衍倒计时（仅成年鱼有意义）
+    # 繁衍倒计时（仅成年鱼有意义，文字居中在进度条上）
     mature = getattr(fish, "is_mature", None) and fish.is_mature()
     by_breed = y + 70
     if mature:
@@ -556,7 +556,7 @@ def draw_fish_info_card(img, draw, fish, x, y, font):
         left = max(0, int(math.ceil(bt)))
         _shadow_text(x + 18, by_breed, "繁衍", (255, 205, 120))
         _bar(by_breed + 1, ratio, (255, 205, 120))
-        _center_bar("%ds" % left, by_breed, (255, 225, 160))
+        _center("%ds" % left, by_breed, (255, 225, 160))
     else:
         _shadow_text(x + 18, by_breed, "繁衍", (150, 160, 180))
         _shadow_text(x + 52, by_breed, "Lv%d成年可繁殖" % MATURE_LEVEL, (150, 160, 180))
