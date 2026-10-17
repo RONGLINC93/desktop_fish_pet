@@ -448,7 +448,7 @@ class SoundManager:
 
 
 # ---------------------------------------------------------------- 信息卡绘制
-INFO_CARD_W = 186
+INFO_CARD_W = 212
 INFO_CARD_H = 110
 INFO_CARD_LINGER = 2.0  # 鼠标离开鱼后，信息卡继续跟随鱼显示的秒数（鱼在游动，便于看清）
 
@@ -558,14 +558,14 @@ def draw_fish_info_card(img, draw, fish, x, y, font):
         _shadow_text(x + 18, by_breed, "繁衍", (150, 160, 180))
         _shadow_text(x + 52, by_breed, "Lv%d成年可繁殖" % MATURE_LEVEL, (150, 160, 180))
 
-    # 底部：价值 + 速度
+    # 底部：价值（左）+ 速度（右）
     try:
         value = int(fish.app._fish_info(fish)[0])
     except Exception:
         value = 0
     speed = int(getattr(fish, "base_speed", 0))
     _shadow_text(x + 18, y + 90, "价值 %d" % value, (255, 220, 120))
-    _shadow_text(x + 96, y + 90, "速度 %d" % speed, (160, 220, 255))
+    _right("速度 %d" % speed, y + 90, (160, 220, 255))
 
     return cw, ch
 
