@@ -4,9 +4,11 @@
 
 格式基于 [Keep a Changelog](https://keepachangelog.com/)，版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
-## [1.0.6] 未发布
+## [1.0.7] 未发布
 
 _开发中，变更将记录于此；发布时本行替换为发布日期。_
+
+## [1.0.6] - 2026-10-17
 
 ### 变更
 - 整理 `app/` 目录结构：新增 `data/`（运行期数据）、`html/`（网页 UI）、`resource/`（素材）三个子目录——`fish_pet_config.json`（及错误日志）移入 `data/`，`settings.html` 与 `shop/shop.html` 移入 `html/`（原 `shop/` 目录删除），`鱼/`、`炮台/`（及可选的 `音效/`）移入 `resource/`。`desktop_fish_pet.py` 相应改为 `RESOURCE_DIR`/`DATA_DIR`/`HTML_DIR` 常量寻址，并在启动时 `makedirs(DATA_DIR)`（发布包不含该目录，保证首跑可写配置）；鱼/炮台/信息卡路径均为相对根目录派生，移动对运行时透明。同步更新 `.gitignore`（忽略 `app/data/` 下配置与日志）、`README.md` 文件结构与说明、`build_win_zip.py` 文档。git 以 rename 记录，保留历史。
