@@ -1148,6 +1148,8 @@ class FishingOverlay:
                                    variable=cur, value=i,
                                    command=lambda k=i: self.app.set_cannon(k))
         menu.add_cascade(label="更换炮台", menu=c_menu)
+        menu.add_separator()
+        menu.add_command(label="退出捕鱼模式", command=self.app.toggle_fishing)
         menu.tk_popup(e.x_root, e.y_root)
 
     def _draw_cannon(self, ang):
