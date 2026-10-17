@@ -40,13 +40,13 @@ python desktop_fish_pet.py
 
 ## 配置说明
 
-配置文件为 `fish_pet_config.json`，程序退出时自动保存当前状态。
+配置文件为 `data/fish_pet_config.json`，程序退出时自动保存当前状态。
 
 ```json
 {
   "fish": [
     {
-      "path": "新版鱼\\huangjinsha",  // 鱼素材目录（位于 鱼/ 下）
+      "path": "新版鱼\\huangjinsha",  // 鱼素材目录（位于 resource/鱼/ 下）
       "scale": 0.7,                   // 缩放比例
       "x": 297,                       // 初始横坐标
       "y": 451                        // 初始纵坐标
@@ -59,7 +59,7 @@ python desktop_fish_pet.py
 
 ### 添加新鱼种
 
-鱼的素材放在 `鱼/` 目录下，每个品种一个子文件夹（如 `鱼/新版鱼/huangjinsha`、`鱼/中型鱼/hujing`）。通过右键菜单“添加小鱼”即可选用，无需手动改配置文件。
+鱼的素材放在 `resource/鱼/` 目录下，每个品种一个子文件夹（如 `resource/鱼/新版鱼/huangjinsha`、`resource/鱼/中型鱼/hujing`）。通过右键菜单“添加小鱼”即可选用，无需手动改配置文件。
 
 ## 文件结构
 
@@ -68,8 +68,15 @@ fish/
 ├── desktop_fish_pet.py    # 主程序
 ├── 启动小鱼.bat            # 一键启动脚本
 ├── requirements.txt       # Python 依赖
-├── fish_pet_config.json   # 运行时配置（自动保存）
-└── 鱼/                    # 鱼素材目录（按品种分子目录）
+├── data/                  # 运行期数据（配置 / 日志，自动生成）
+│   └── fish_pet_config.json
+├── html/                  # 设置 / 商城网页（pywebview 内嵌）
+│   ├── settings.html
+│   └── shop.html
+└── resource/              # 素材资源
+    ├── 鱼/                # 鱼素材目录（按品种分子目录）
+    ├── 炮台/              # 炮台皮肤（1~6.png）
+    └── 音效/              # 可选自定义音效（shoot/hit/catch/poke.wav）
 ```
 
 ## 使用提示

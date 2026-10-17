@@ -63,6 +63,7 @@ gdi32 = ctypes.windll.gdi32
 GWL_EXSTYLE = -20
 WS_EX_LAYERED = 0x00080000
 WS_EX_TOOLWINDOW = 0x00000080
+WS_EX_TRANSPARENT = 0x00000020  # 鼠标穿透：整窗点击穿透到桌面，不再接收鼠标
 ULW_ALPHA = 2
 SPI_GETWORKAREA = 0x0030
 GA_ROOT = 2
@@ -210,11 +211,14 @@ gdi32.DeleteDC.argtypes = [wintypes.HDC]
 
 # ---------------------------------------------------------------- 素材
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-FISH_ROOT = os.path.join(BASE_DIR, "鱼")
+RESOURCE_DIR = os.path.join(BASE_DIR, "resource")   # 图片/音效等素材
+DATA_DIR = os.path.join(BASE_DIR, "data")           # 运行时配置与日志
+HTML_DIR = os.path.join(BASE_DIR, "html")           # 设置 / 商城网页
+FISH_ROOT = os.path.join(RESOURCE_DIR, "鱼")
 GROUPS = ["新版鱼", "中型鱼"]
-CONFIG_PATH = os.path.join(BASE_DIR, "fish_pet_config.json")
-CANNON_ROOT = os.path.join(BASE_DIR, "炮台")
-SOUND_DIR = os.path.join(BASE_DIR, "音效")
+CONFIG_PATH = os.path.join(DATA_DIR, "fish_pet_config.json")
+CANNON_ROOT = os.path.join(RESOURCE_DIR, "炮台")
+SOUND_DIR = os.path.join(RESOURCE_DIR, "音效")
 
 
 def find_cannons():
@@ -349,6 +353,82 @@ def compute_roam_area(workarea):
     except Exception:
         pass
     return workarea
+
+
+class MONITORINFOEX(ctypes.Structure):
+    _fields_ = [("cbSize", ctypes.c_ulong),
+                ("rcMonitor", RECT),
+                ("rcWork", RECT),
+                ("dwFlags", ctypes.c_ulong),
+                ("szDevice", ctypes.c_wchar * 32)]
+
+
+# 枚举显示器用的回调类型与结果容器
+_MONITOR_ENUMPROC = ctypes.WINFUNCTYPE(
+    ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p,
+    ctypes.POINTER(RECT), ctypes.c_void_p)
+_MONITOR_RESULT = []
+
+
+def _monitor_enum_proc(hmon, hdc, lprect, lparam):
+    info = MONITORINFOEX()
+    info.cbSize = ctypes.sizeof(MONITORINFOEX)
+    user32.GetMonitorInfoW(hmon, ctypes.byref(info))
+    _MONITOR_RESULT.append(info)
+    return True
+
+
+def get_monitors():
+    """枚举所有显示器，返回已按「主屏优先」排序的列表。
+
+    每项：{"index": int, "primary": bool, "name": str, "label": str,
+           "res": "WxH", "rect": (L,T,R,B) 整屏, "work": (L,T,R,B) 工作区}
+    坐标均为虚拟桌面坐标（多屏下可能为负），与鱼游走坐标同一套。
+    index 从 0 起、主屏为 0，供 `App.screen` 引用。枚举失败则返回空列表。
+    """
+    out = []
+    try:
+        _MONITOR_RESULT.clear()
+        user32.EnumDisplayMonitors(0, None, _MONITOR_ENUMPROC(_monitor_enum_proc), 0)
+        infos = list(_MONITOR_RESULT)
+        infos.sort(key=lambda i: 0 if (i.dwFlags & 1) else 1)  # 主屏排最前
+        for idx, info in enumerate(infos):
+            m = info.rcMonitor
+            w = info.rcWork
+            primary = bool(info.dwFlags & 1)
+            res = "%dx%d" % (max(0, w.right - w.left), max(0, w.bottom - w.top))
+            out.append({
+                "index": idx,
+                "primary": primary,
+                "name": (info.szDevice or "").strip() or ("屏幕 %d" % (idx + 1)),
+                "label": "主屏幕" if primary else ("屏幕 %d" % (idx + 1)),
+                "res": res,
+                "rect": (m.left, m.top, m.right, m.bottom),
+                "work": (w.left, w.top, w.right, w.bottom),
+            })
+    except Exception:
+        pass
+    return out
+
+
+def monitor_work_rect(index):
+    """返回指定 index 显示器的工作区矩形（虚拟桌面坐标）；无效索引返回 None。"""
+    if index is None or index < 0:
+        return None
+    for m in get_monitors():
+        if m["index"] == index:
+            return m["work"]
+    return None
+
+
+try:  # 显示器枚举（屏幕选择功能用）
+    user32.EnumDisplayMonitors.argtypes = [ctypes.c_void_p, ctypes.POINTER(RECT),
+                                           _MONITOR_ENUMPROC, ctypes.c_void_p]
+    user32.EnumDisplayMonitors.restype = ctypes.c_bool
+    user32.GetMonitorInfoW.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
+    user32.GetMonitorInfoW.restype = ctypes.c_bool
+except Exception:
+    pass
 
 
 # ---------------------------------------------------------------- 音效
@@ -614,7 +694,10 @@ class Fish:
 
         self.hwnd = user32.GetAncestor(self.win.winfo_id(), GA_ROOT)
         ex = user32.GetWindowLongPtrW(self.hwnd, GWL_EXSTYLE)
-        user32.SetWindowLongPtrW(self.hwnd, GWL_EXSTYLE, ex | WS_EX_LAYERED | WS_EX_TOOLWINDOW)
+        ex |= WS_EX_LAYERED | WS_EX_TOOLWINDOW
+        if getattr(app, "mouse_penetration", False):
+            ex |= WS_EX_TRANSPARENT
+        user32.SetWindowLongPtrW(self.hwnd, GWL_EXSTYLE, ex)
 
         self.hdc_screen = user32.GetDC(0)
         self.hdc_mem = gdi32.CreateCompatibleDC(self.hdc_screen)
@@ -854,7 +937,10 @@ class FishInfoOverlay:
 
         self.hwnd = user32.GetAncestor(self.win.winfo_id(), GA_ROOT)
         ex = user32.GetWindowLongPtrW(self.hwnd, GWL_EXSTYLE)
-        user32.SetWindowLongPtrW(self.hwnd, GWL_EXSTYLE, ex | WS_EX_LAYERED | WS_EX_TOOLWINDOW)
+        ex |= WS_EX_LAYERED | WS_EX_TOOLWINDOW
+        if getattr(app, "mouse_penetration", False):
+            ex |= WS_EX_TRANSPARENT
+        user32.SetWindowLongPtrW(self.hwnd, GWL_EXSTYLE, ex)
 
         self.hdc_screen = user32.GetDC(0)
         self.hdc_mem = gdi32.CreateCompatibleDC(self.hdc_screen)
@@ -957,6 +1043,127 @@ class FishInfoOverlay:
         user32.UpdateLayeredWindow(self.hwnd, self.hdc_screen, ctypes.byref(dst),
                                    ctypes.byref(sz), self.hdc_mem, ctypes.byref(src),
                                    0, ctypes.byref(blend), ULW_ALPHA)
+
+    def destroy(self):
+        try:
+            if getattr(self, "hbm", None):
+                gdi32.SelectObject(self.hdc_mem, self.old_hbm)
+                gdi32.DeleteObject(self.hbm)
+            gdi32.DeleteDC(self.hdc_mem)
+            user32.ReleaseDC(0, self.hdc_screen)
+        except Exception:
+            pass
+        try:
+            self.win.destroy()
+        except Exception:
+            pass
+
+
+# ---------------------------------------------------------------- 浮动文字浮层
+class FloaterOverlay:
+    """普通模式下渲染浮动文字（如「繁殖了N条小鱼!」）：一张覆盖虚拟桌面的
+    透明叠加窗口，逐帧把 app.floaters 画上去，到期自动清除；无内容时不重绘。
+    窗口始终为鼠标穿透，仅作装饰，不会挡住小鱼交互。"""
+
+    def __init__(self, app):
+        self.app = app
+        L = user32.GetSystemMetrics(SM_XVIRTUALSCREEN)
+        T = user32.GetSystemMetrics(SM_YVIRTUALSCREEN)
+        W = user32.GetSystemMetrics(SM_CXVIRTUALSCREEN)
+        H = user32.GetSystemMetrics(SM_CYVIRTUALSCREEN)
+        if not (W > 0 and H > 0):  # 取不到虚拟桌面度量时退回主屏工作区
+            L, T, R, B = app.workarea
+            W, H = R - L, B - T
+        self.L, self.T, self.W, self.H = L, T, W, H
+
+        self.win = tk.Toplevel(app.root)
+        self.win.overrideredirect(True)
+        self.win.attributes("-topmost", True)
+        self.win.attributes("-disabled", True)  # 不接收鼠标，避免挡住鱼的交互
+        self.win.configure(bg="black")
+        self.win.geometry("%dx%d+%d+%d" % (W, H, L, T))
+        self.win.update_idletasks()
+
+        self.hwnd = user32.GetAncestor(self.win.winfo_id(), GA_ROOT)
+        ex = user32.GetWindowLongPtrW(self.hwnd, GWL_EXSTYLE)
+        ex |= WS_EX_LAYERED | WS_EX_TOOLWINDOW | WS_EX_TRANSPARENT  # 整窗鼠标穿透
+        user32.SetWindowLongPtrW(self.hwnd, GWL_EXSTYLE, ex)
+
+        self.hdc_screen = user32.GetDC(0)
+        self.hdc_mem = gdi32.CreateCompatibleDC(self.hdc_screen)
+        self.hbm = None
+        self.old_hbm = None
+        self.bits = None
+        self._make_dib(W, H)
+        self.img = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+        self.draw = ImageDraw.Draw(self.img)
+        try:
+            self.font = load_cjk_font(20)
+        except Exception:
+            self.font = None
+        self._active = False  # 当前是否已绘制内容（用于按需清屏）
+        self._blank()
+
+    def _make_dib(self, w, h):
+        if getattr(self, "hbm", None):
+            gdi32.SelectObject(self.hdc_mem, self.old_hbm)
+            gdi32.DeleteObject(self.hbm)
+        bi = BITMAPINFO()
+        bi.bmiHeader.biSize = ctypes.sizeof(BITMAPINFOHEADER)
+        bi.bmiHeader.biWidth = w
+        bi.bmiHeader.biHeight = -h
+        bi.bmiHeader.biPlanes = 1
+        bi.bmiHeader.biBitCount = 32
+        bi.bmiHeader.biCompression = 0
+        bits = ctypes.c_void_p()
+        self.hbm = gdi32.CreateDIBSection(self.hdc_screen, ctypes.byref(bi), 0,
+                                          ctypes.byref(bits), None, 0)
+        self.bits = bits
+        self.old_hbm = gdi32.SelectObject(self.hdc_mem, self.hbm)
+        self.dib_size = (w, h)
+
+    def _push(self):
+        r, g, b, a = self.img.split()
+        bgra = Image.merge("RGBA", (b, g, r, a)).tobytes()
+        ctypes.memmove(self.bits, bgra, self.W * self.H * 4)
+        blend = BLENDFUNCTION(0, 0, 255, 1)
+        dst = POINT(int(self.L), int(self.T))
+        sz = SIZE(self.W, self.H)
+        src = POINT(0, 0)
+        user32.UpdateLayeredWindow(self.hwnd, self.hdc_screen, ctypes.byref(dst),
+                                   ctypes.byref(sz), self.hdc_mem, ctypes.byref(src),
+                                   0, ctypes.byref(blend), ULW_ALPHA)
+
+    def _blank(self):
+        self.img.paste((0, 0, 0, 0), [0, 0, self.W, self.H])
+        self._push()
+        self._active = False
+
+    def update(self, dt):
+        """推进 app.floaters 的计时并重绘；无内容时保持空白、不重绘。"""
+        fls = self.app.floaters
+        for fl in list(fls):
+            fl["t"] += dt
+            fl["y"] -= fl["vy"] * dt
+            if fl["t"] >= fl["life"]:
+                fls.remove(fl)
+        if fls:
+            self.img.paste((0, 0, 0, 0), [0, 0, self.W, self.H])
+            for fl in fls:
+                col = fl.get("color", (255, 205, 120))
+                text = fl["text"]
+                lx = fl["x"] - self.L
+                ly = fl["y"] - self.T
+                if self.font:
+                    tw = self.draw.textlength(text, font=self.font)
+                    self.draw.text((lx - tw / 2, ly), text, fill=col, font=self.font,
+                                   stroke_width=3, stroke_fill=(0, 0, 0))
+                else:
+                    self.draw.text((lx - 14, ly), text, fill=col)
+            self._push()
+            self._active = True
+        elif self._active:
+            self._blank()
 
     def destroy(self):
         try:
@@ -1564,6 +1771,7 @@ class App:
             raise RuntimeError(f"在 {FISH_ROOT} 下没有找到鱼素材")
 
         self.fishes = []
+        self.floaters = []  # 普通模式的浮动文字（如繁殖提示）；捕鱼模式用叠加层自己的列表
         self.paused = False
         self.hidden = False
         self.tray = None
@@ -1576,13 +1784,20 @@ class App:
         self.sounds = SoundManager()
         self.berserk_enabled = True
         self.autostart_enabled = self.is_autostart_enabled()  # 以注册表现状为准
-        self.cross_screen = True  # 跨屏游走开关；load_config 可能覆盖
+        self.cross_screen = True  # 跨屏游走开关（screen==-1 时为真）；load_config 可能覆盖
+        self.screen = -1  # 鱼游走的屏幕：-1=全部屏幕（虚拟桌面），0..n-1=指定显示器；load_config 可能覆盖
+        self.mouse_penetration = False  # 鼠标穿透：整窗点击穿透到桌面；load_config 可能覆盖
         self.max_fish = MAX_FISH  # 鱼数量上限；load_config 可能覆盖
         self._save_ticks = 0
 
+        # 运行期数据目录（配置 / 日志）——发布包不含该目录，需在运行时确保存在
+        try:
+            os.makedirs(DATA_DIR, exist_ok=True)
+        except Exception:
+            pass
         saved = self.load_config()
-        # 依据开关计算鱼的游走边界（跨屏=虚拟桌面，否则=主屏工作区）
-        self.roam = compute_roam_area(self.workarea) if self.cross_screen else self.workarea
+        # 依据屏幕设置计算鱼的游走边界（screen==-1 取虚拟桌面，否则取该屏工作区）
+        self.apply_roam()
         L, T, R, B = self.roam  # 鱼在游走边界内生成/收拢
         if saved:
             for sp, scale, x, y, level, growth in saved:
@@ -1599,6 +1814,11 @@ class App:
         self.build_tray()
         # 鱼信息浮层（悬停显示），需在 build_tray 之后创建
         self.fish_info = FishInfoOverlay(self)
+        # 普通模式的浮动文字浮层（繁殖提示等），需在 build_tray 之后创建
+        self.floater_overlay = FloaterOverlay(self)
+        # 上次若开启了鼠标穿透，则恢复窗口样式（鱼与信息卡整窗穿透）
+        if self.mouse_penetration:
+            self._apply_mouse_penetration()
         # 上次若在捕鱼模式，则自动恢复
         if getattr(self, "_restore_fishing", False):
             self.toggle_fishing()
@@ -1614,7 +1834,9 @@ class App:
         data = {"fish": [], "coins": self.coins, "cannon_level": self.cannon_level,
                 "cannon": self.cannon_index, "sound": self.sound_enabled,
                 "berserk": self.berserk_enabled, "fishing": self.fishing,
-                "cross_screen": self.cross_screen, "max_fish": self.max_fish}
+                "cross_screen": self.cross_screen, "screen": self.screen,
+                "mouse_penetration": self.mouse_penetration,
+                "max_fish": self.max_fish}
         for f in self.fishes:
             rel = os.path.relpath(f.species[1], FISH_ROOT)
             data["fish"].append({"path": rel, "scale": round(f.base_scale, 3),
@@ -1657,6 +1879,16 @@ class App:
         self.berserk_enabled = bool(data.get("berserk", True))
         self._restore_fishing = bool(data.get("fishing", False))
         self.cross_screen = bool(data.get("cross_screen", True))
+        if "screen" in data:  # 新配置：screen 为准，-1 即跨屏
+            try:
+                sc = int(data["screen"])
+            except (TypeError, ValueError):
+                sc = -1
+            self.screen = sc
+            self.cross_screen = (sc == -1)
+        else:  # 旧配置无 screen 字段，由 cross_screen 推导
+            self.screen = -1 if self.cross_screen else 0
+        self.mouse_penetration = bool(data.get("mouse_penetration", False))
         if isinstance(data.get("max_fish"), (int, float)):
             self.max_fish = max(1, min(MAX_FISH_LIMIT, int(data["max_fish"])))
         return out or None
@@ -1691,6 +1923,7 @@ class App:
             elif self.fish_info.visible and self.fish_info._hide_at is None:
                 self.fish_info.hide()                   # 离开鱼：仅挂一次延迟，不每帧重置（否则永不隐藏）
             self.fish_info.update()                     # 跟随鱼重绘；延迟到期则真正隐藏
+            self.floater_overlay.update(dt)             # 繁殖提示等浮动文字（到期自动清除）
         self._save_ticks += 1
         if self._save_ticks >= 180:  # 约每 6 秒自动存一次位置
             self._save_ticks = 0
@@ -1714,6 +1947,8 @@ class App:
             )),
             TrayItem("捕鱼模式", lambda icon, item: self._invoke(self.toggle_fishing),
                      checked=lambda item: self.fishing),
+            TrayItem("鼠标穿透", lambda icon, item: self._invoke(self.toggle_mouse_penetration),
+                     checked=lambda item: self.mouse_penetration),
             TrayItem("设置", lambda icon, item: self._invoke(self.open_settings)),
             TrayItem("商城", lambda icon, item: self._invoke(self.open_shop)),
             TrayItem("退出", lambda icon, item: self._invoke(self.quit)),
@@ -1909,14 +2144,44 @@ class App:
         except Exception:
             pass
 
-    # ---------- 跨屏游走 ----------
+    # ---------- 跨屏游走 / 屏幕选择 ----------
     def apply_roam(self):
-        """按 cross_screen 开关重算鱼的游走边界。"""
-        self.roam = compute_roam_area(self.workarea) if self.cross_screen else self.workarea
+        """按 screen 设置重算鱼的游走边界：
+        screen==-1 取整个虚拟桌面（跨屏）；screen>=0 取该显示器工作区；其它回退主屏工作区。"""
+        if self.cross_screen:
+            self.roam = compute_roam_area(self.workarea)
+        elif self.screen >= 0:
+            rect = monitor_work_rect(self.screen)
+            self.roam = rect if rect else self.workarea
+        else:
+            self.roam = self.workarea
 
     def toggle_cross_screen(self):
         self.cross_screen = not self.cross_screen
+        self.screen = -1 if self.cross_screen else 0  # 关掉跨屏则收拢回主屏幕
         self.apply_roam()  # 关掉时 roam 收缩回主屏，鱼会在下一帧贴边收拢回来
+        self.save_config()
+        try:
+            self.tray.update_menu()
+        except Exception:
+            pass
+
+    def set_screen(self, idx):
+        """选择鱼游走的屏幕：-1=全部屏幕（虚拟桌面），0..n-1=指定显示器；无效索引忽略。"""
+        try:
+            idx = int(idx)
+        except (TypeError, ValueError):
+            return
+        mons = get_monitors()
+        if idx == -1:
+            self.screen = -1
+            self.cross_screen = True
+        elif 0 <= idx < len(mons):
+            self.screen = idx
+            self.cross_screen = False
+        else:
+            return  # 无效索引
+        self.apply_roam()  # 鱼会在下一帧贴边收拢到新边界
         self.save_config()
         try:
             self.tray.update_menu()
@@ -1926,6 +2191,32 @@ class App:
     def set_max_fish(self, n):
         """设置鱼数量上限（同时限制手动添加与自动繁殖）。"""
         self.max_fish = max(1, min(MAX_FISH_LIMIT, int(n)))
+        self.save_config()
+        try:
+            self.tray.update_menu()
+        except Exception:
+            pass
+
+    # ---------- 鼠标穿透 ----------
+    def _set_ex_style(self, hwnd, style, on):
+        """给指定窗口句柄增/删某个扩展样式位（on=True 增，False 删）。"""
+        if not hwnd:
+            return
+        ex = user32.GetWindowLongPtrW(hwnd, GWL_EXSTYLE)
+        ex = ex | style if on else ex & ~style
+        user32.SetWindowLongPtrW(hwnd, GWL_EXSTYLE, ex)
+
+    def _apply_mouse_penetration(self):
+        """把鼠标穿透样式套用到所有鱼窗口与信息卡窗口（穿透=整窗点击落到桌面）。"""
+        for f in self.fishes:
+            if getattr(f, "hwnd", None):
+                self._set_ex_style(f.hwnd, WS_EX_TRANSPARENT, self.mouse_penetration)
+        if getattr(self.fish_info, "hwnd", None):
+            self._set_ex_style(self.fish_info.hwnd, WS_EX_TRANSPARENT, self.mouse_penetration)
+
+    def toggle_mouse_penetration(self):
+        self.mouse_penetration = not self.mouse_penetration
+        self._apply_mouse_penetration()
         self.save_config()
         try:
             self.tray.update_menu()
@@ -2161,6 +2452,11 @@ class App:
                 self.fish_info.destroy()
         except Exception:
             pass
+        try:
+            if getattr(self, "floater_overlay", None) is not None:
+                self.floater_overlay.destroy()
+        except Exception:
+            pass
         # 先关闭已打开的设置 / 商城窗口，避免退出时它们残留
         for name in ("_settings_window", "_shop_window"):
             w = getattr(self, name, None)
@@ -2183,7 +2479,7 @@ class App:
 # ---------------------------------------------------------------- 商城 HTML 桥接
 def load_shop_html():
     """读取商城页面（自包含的 HTML/CSS/JS）。"""
-    path = os.path.join(BASE_DIR, "shop", "shop.html")
+    path = os.path.join(HTML_DIR, "shop.html")
     with open(path, "r", encoding="utf-8") as fp:
         return fp.read()
 
@@ -2352,7 +2648,7 @@ class ShopAPI:
 # ---------------------------------------------------------------- 设置 HTML 桥接
 def load_settings_html():
     """读取设置页面（自包含的 HTML/CSS/JS）。"""
-    path = os.path.join(BASE_DIR, "settings.html")
+    path = os.path.join(HTML_DIR, "settings.html")
     with open(path, "r", encoding="utf-8") as fp:
         return fp.read()
 
@@ -2396,6 +2692,9 @@ class SettingsAPI:
             "sound_enabled": app.sound_enabled,
             "autostart": app.is_autostart_enabled(),
             "cross_screen": app.cross_screen,
+            "screen": app.screen,
+            "monitors": get_monitors(),
+            "mouse_penetration": app.mouse_penetration,
             "berserk_enabled": app.berserk_enabled,
             "cannon_index": app.cannon_index,
             "cannon_count": len(find_cannons()),
@@ -2423,6 +2722,15 @@ class SettingsAPI:
 
     def toggle_cross_screen(self):
         return self._run_on_main(lambda: self._toggle("toggle_cross_screen"))
+
+    def set_screen(self, idx):
+        def _t():
+            self.app.set_screen(int(idx))
+            return {"ok": True, "msg": "已切换屏幕"}
+        return self._run_on_main(_t)
+
+    def toggle_mouse_penetration(self):
+        return self._run_on_main(lambda: self._toggle("toggle_mouse_penetration"))
 
     def toggle_berserk(self):
         return self._run_on_main(lambda: self._toggle("toggle_berserk"))
@@ -2473,9 +2781,9 @@ def _app_thread():
         import traceback
         traceback.print_exc()
         if sys.stdout is None:  # pythonw 下把错误写到文件，方便排查
-            with open(os.path.join(BASE_DIR, "fish_pet_error.log"), "w", encoding="utf-8") as fp:
+            with open(os.path.join(DATA_DIR, "fish_pet_error.log"), "w", encoding="utf-8") as fp:
                 traceback.print_exc(file=fp)
-        # App 启动失败时销毁宿主窗口，避免主线程的 webview.start() 卡死
+            # App 启动失败时销毁宿主窗口，避免主线程的 webview.start() 卡死
         try:
             host = globals().get("WEBVIEW_HOST")
             if host is not None:
@@ -2500,6 +2808,6 @@ if __name__ == "__main__":
             import traceback
             traceback.print_exc()
             if sys.stdout is None:  # pythonw 下把错误写到文件，方便排查
-                with open(os.path.join(BASE_DIR, "fish_pet_error.log"), "w", encoding="utf-8") as fp:
+                with open(os.path.join(DATA_DIR, "fish_pet_error.log"), "w", encoding="utf-8") as fp:
                     traceback.print_exc(file=fp)
-            input("按回车退出...")
+                input("按回车退出...")

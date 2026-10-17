@@ -8,13 +8,14 @@
 凭据、版本源文件都在仓库根目录，不在 app/ 内，因此不会被打进包里。
 版本号取自 version.txt（单行，如 1.0.0）；双击运行即用。
 
-包内结构（扁平，解压即可运行）：
+包内结构（解压即可运行，保持 app/ 内相对目录）：
     desktop_fish_pet.py
     启动小鱼.bat
     requirements.txt
-    fish_pet_config.json
+    data/                  # 运行期数据（首次运行自动生成）
+    html/                  # settings.html / shop.html
+    resource/              # 鱼/、炮台/、音效/ 等素材
     README.md
-    鱼/
 """
 import io
 import os

@@ -12,5 +12,6 @@ build/
 dist/
 *.zip
 
-# 配置文件
-app/fish_pet_config.json
+# 配置文件 / 运行期数据
+app/data/fish_pet_config.json
+app/data/fish_pet_error.log

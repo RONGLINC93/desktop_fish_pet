@@ -62,6 +62,10 @@
   </header>
   <div class="body">
     <div class="box"><h3>通用设置</h3><div id="switches"></div></div>
+    <div class="box"><h3>屏幕</h3>
+      <div class="hint" style="margin-bottom:8px;">选择小鱼游走的屏幕，「全部屏幕」可跨显示器游走。</div>
+      <div class="chips" id="screens"></div>
+    </div>
     <div class="box"><h3>鱼池上限</h3><div class="chips" id="maxfish"></div>
       <div style="margin-top:10px;display:flex;gap:8px;align-items:center;">
         <span class="hint">自定义</span>
@@ -88,9 +92,8 @@
     {key:'fishing',        label:'捕鱼模式', api:'toggle_fishing'},
     {key:'sound_enabled',  label:'音效',     api:'toggle_sound'},
     {key:'autostart',      label:'开机自启', api:'toggle_autostart'},
-    {key:'cross_screen',   label:'跨屏游走', api:'toggle_cross_screen'},
+    {key:'mouse_penetration', label:'鼠标穿透', api:'toggle_mouse_penetration'},
     {key:'berserk_enabled',label:'狂暴模式', api:'toggle_berserk'},
-    {key:'behind_desktop', label:'置于桌面图标下', api:'toggle_behind_desktop'},
   ];
 
   function toast(msg){
@@ -125,6 +128,17 @@
       b.onclick = () => callApi(s.api);
       row.appendChild(name); row.appendChild(b);
       sw.appendChild(row);
+    });
+    // 屏幕选择
+    const sc = document.getElementById('screens');
+    sc.innerHTML = '';
+    const opts = [{index:-1, label:'全部屏幕', res:''}].concat(DATA.monitors || []);
+    opts.forEach(m => {
+      const b = document.createElement('button');
+      b.className = 'chip' + (m.index === DATA.screen ? ' sel' : '');
+      b.textContent = m.res ? (m.label + ' (' + m.res + ')') : m.label;
+      b.onclick = () => callApi('set_screen', m.index);
+      sc.appendChild(b);
     });
     // 鱼池上限
     const mf = document.getElementById('maxfish');
