@@ -2,11 +2,11 @@
 setlocal
 cd /d "%~dp0"
 
-echo ÕýÔÚ¼ì²é²¢°²×°ÒÀÀµ£¨requirements.txt£©...
-python -m pip install -q -r requirements.txt
+echo æ­£åœ¨æ£€æŸ¥å¹¶å®‰è£…ä¾èµ–ï¼ˆsupport\requirements.txtï¼‰...
+python -m pip install -q -r support\requirements.txt
 if %errorlevel% neq 0 (
-  echo [¾¯¸æ] ¾²Ä¬°²×°Ê§°Ü£¬³¢ÊÔÆÕÍ¨·½Ê½°²×°...
-  pip install -r requirements.txt
+  echo [è­¦å‘Š] é™é»˜å®‰è£…å¤±è´¥ï¼Œå°è¯•æ™®é€šæ–¹å¼å®‰è£…...
+  pip install -r support\requirements.txt
 )
 
 where pythonw >nul 2>nul

@@ -10,6 +10,7 @@ _开发中，变更将记录于此；发布时本行替换为发布日期。_
 
 ### 变更
 - 整理 `app/` 目录结构：新增 `data/`（运行期数据）、`html/`（网页 UI）、`resource/`（素材）三个子目录——`fish_pet_config.json`（及错误日志）移入 `data/`，`settings.html` 与 `shop/shop.html` 移入 `html/`（原 `shop/` 目录删除），`鱼/`、`炮台/`（及可选的 `音效/`）移入 `resource/`。`desktop_fish_pet.py` 相应改为 `RESOURCE_DIR`/`DATA_DIR`/`HTML_DIR` 常量寻址，并在启动时 `makedirs(DATA_DIR)`（发布包不含该目录，保证首跑可写配置）；鱼/炮台/信息卡路径均为相对根目录派生，移动对运行时透明。同步更新 `.gitignore`（忽略 `app/data/` 下配置与日志）、`README.md` 文件结构与说明、`build_win_zip.py` 文档。git 以 rename 记录，保留历史。
+- 新增 `app/support/` 目录存放辅助文件，`requirements.txt` 从 `app/` 根移入其中；`app/启动小鱼.bat`、根目录 `开发启动小鱼.bat`、`README.md` 安装命令与文件结构、`build_win_zip.py` 文档中的依赖路径同步改为 `support/requirements.txt`（或 `app/support/requirements.txt`）。
 - 炮台菜单新增「退出捕鱼模式」：捕鱼模式下右键炮台本体弹出的菜单，在「更换炮台」下方加分隔线并新增「退出捕鱼模式」一项，点击即退出捕鱼模式（复用 `App.toggle_fishing`）。
 - 修复普通模式繁殖提示崩溃：普通模式下成年鱼自动繁殖（或手动繁殖）时，`breed_fish` 向不存在的 `App.floaters` 追加浮动文字，抛出 `AttributeError: 'App' object has no attribute 'floaters'`，中断 tkinter 回调。现新增 `App.floaters` 列表与一张覆盖虚拟桌面的 `FloaterOverlay`（整窗鼠标穿透、仅装饰），在主循环逐帧渲染并到期自动清除；捕鱼模式仍用捕鱼叠加层自己的浮动文字列表。
 - 商城鱼面板改为「购买 / 出售」两列各自滚动：此前两列同处一个滚动容器、整页一起滚，且列头会随滚动消失；现鱼面板不再整体滚动，改为两列等高、各自独立滚动，「购买（加入鱼池）/ 出售（鱼池现有）」列头固定常驻。炮台面板行为不变。

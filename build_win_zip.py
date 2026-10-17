@@ -11,10 +11,10 @@
 包内结构（解压即可运行，保持 app/ 内相对目录）：
     desktop_fish_pet.py
     启动小鱼.bat
-    requirements.txt
     data/                  # 运行期数据（首次运行自动生成）
     html/                  # settings.html / shop.html
     resource/              # 鱼/、炮台/、音效/ 等素材
+    support/               # requirements.txt 等辅助文件
     README.md
 """
 import io

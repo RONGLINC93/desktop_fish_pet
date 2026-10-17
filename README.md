@@ -32,7 +32,7 @@
 
 ```bash
 # 1. 安装依赖
-pip install -r requirements.txt
+pip install -r support/requirements.txt
 
 # 2. 运行
 python desktop_fish_pet.py
@@ -67,16 +67,17 @@ python desktop_fish_pet.py
 fish/
 ├── desktop_fish_pet.py    # 主程序
 ├── 启动小鱼.bat            # 一键启动脚本
-├── requirements.txt       # Python 依赖
 ├── data/                  # 运行期数据（配置 / 日志，自动生成）
 │   └── fish_pet_config.json
 ├── html/                  # 设置 / 商城网页（pywebview 内嵌）
 │   ├── settings.html
 │   └── shop.html
-└── resource/              # 素材资源
-    ├── 鱼/                # 鱼素材目录（按品种分子目录）
-    ├── 炮台/              # 炮台皮肤（1~6.png）
-    └── 音效/              # 可选自定义音效（shoot/hit/catch/poke.wav）
+├── resource/              # 素材资源
+│   ├── 鱼/                # 鱼素材目录（按品种分子目录）
+│   ├── 炮台/              # 炮台皮肤（1~6.png）
+│   └── 音效/              # 可选自定义音效（shoot/hit/catch/poke.wav）
+└── support/               # 辅助文件
+    └── requirements.txt   # Python 依赖清单
 ```
 
 ## 使用提示
