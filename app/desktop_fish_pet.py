@@ -2534,6 +2534,23 @@ class ShopAPI:
 
         gif_cache = {}
 
+        def img_uri(path, height):
+            """把单张 PNG 缩放到指定高度，返回 data URI（炮台等非帧序列素材用）。"""
+            if not path or not os.path.isfile(path):
+                return ""
+            try:
+                im = Image.open(path).convert("RGBA")
+                if im.height > 0 and height:
+                    scale = float(height) / im.height
+                    im = im.resize((max(1, round(im.width * scale)), int(height)),
+                                   Image.LANCZOS)
+                buf = io.BytesIO()
+                im.save(buf, format="PNG")
+                return "data:image/png;base64," + base64.b64encode(
+                    buf.getvalue()).decode("ascii")
+            except Exception:
+                return ""
+
         def fish_gif(dir_path):
             """把鱼的 PNG 帧序列合成为一段循环 GIF（data URI），供前端 <img> 播放。
             鱼素材是 Resources/ 下的帧 PNG，需要合成 GIF 才能在前端动起来。"""
@@ -2584,6 +2601,15 @@ class ShopAPI:
             fishes.append({"id": id(f), "label": sp[0],
                            "level": f.level, "price": app.fish_sell_price(f),
                            "gif": fish_gif(sp[1])})
+        cannons = []
+        cannon_paths = find_cannons()
+        for i, cp in enumerate(cannon_paths):
+            cannons.append({
+                "index": i,
+                "label": "炮台 %d" % (i + 1),
+                "img": img_uri(cp, 56),          # 格子缩略图
+                "big": img_uri(cp, 132),         # 炮台卡片大图预览
+            })
         return {
             "coins": app.coins,
             "max_fish": app.max_fish,
@@ -2591,13 +2617,16 @@ class ShopAPI:
             "cannon_level": app.cannon_level,
             "cannon_max": CANNON_MAX_LEVEL,
             "cannon_index": app.cannon_index,
-            "cannon_count": len(find_cannons()),
+            "cannon_count": len(cannon_paths),
+            "cannon_img": (cannons[app.cannon_index]["big"]
+                           if 0 <= app.cannon_index < len(cannons) else ""),
             "upgrade_cost": app.cannon_upgrade_cost(),
             "sell_cannon_refund": int(CANNON_UPGRADE_BASE
                                       * (app.cannon_level - 1)
                                       * CANNON_SELL_RATE),
             "species": species,
             "fishes": fishes,
+            "cannons": cannons,
         }
 
     # ---------- 写操作 ----------

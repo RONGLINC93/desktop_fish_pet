@@ -1,233 +1,763 @@
 <!DOCTYPE html>
 <html lang="zh-CN">
+
 <head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>商城</title>
-<style>
-  :root{
-    --bg1:#0b2545; --bg2:#13315c; --card:#ffffff; --ink:#13315c;
-    --gold:#f2c94c; --gold-ink:#9a6b00; --green:#27ae60; --muted:#8aa0c0;
-  }
-  *{box-sizing:border-box;}
-  html,body{margin:0;height:100%;
-    font-family:"Microsoft YaHei","PingFang SC","Segoe UI",system-ui,sans-serif;}
-  body{
-    background:linear-gradient(160deg,var(--bg1),var(--bg2));
-    color:#eaf2ff;display:flex;flex-direction:column;height:100vh;overflow:hidden;
-  }
-  header{display:flex;align-items:center;justify-content:space-between;
-    padding:14px 18px;border-bottom:1px solid rgba(255,255,255,.08);}
-  .coins{font-size:18px;font-weight:700;color:var(--gold);display:flex;align-items:center;gap:8px;}
-  .coins .ico{width:18px;height:18px;border-radius:50%;
-    background:radial-gradient(circle at 30% 30%,#fff6c2,var(--gold));display:inline-block;
-    box-shadow:0 0 6px rgba(242,201,76,.6);}
-  .pool{font-size:13px;color:var(--muted);}
-  .tabs{display:flex;gap:8px;padding:12px 18px 0;}
-  .tab{padding:8px 22px;border:none;border-radius:10px 10px 0 0;cursor:pointer;
-    background:rgba(255,255,255,.08);color:#cfe0ff;font-size:14px;font-weight:600;
-    transition:background .15s,color .15s;}
-  .tab:hover{background:rgba(255,255,255,.16);}
-  .tab.active{background:var(--card);color:var(--ink);}
-  .panel{flex:1;overflow:auto;padding:16px 18px;display:none;}
-  .panel.active{display:block;}
-  .cols{display:grid;grid-template-columns:1fr 1fr;gap:16px;}
-  .box{background:var(--card);color:var(--ink);border-radius:14px;padding:14px;
-    box-shadow:0 8px 24px rgba(0,0,0,.25);}
-  .box h3{margin:0 0 10px;font-size:15px;color:var(--bg2);}
-  /* 鱼面板：购买 / 出售 两列各自滚动，列头固定不动 */
-  #panel-fish{overflow:hidden;}
-  #panel-fish.active{display:flex;flex-direction:column;}
-  #panel-fish .cols{flex:1;min-height:0;}
-  #panel-fish .box{display:flex;flex-direction:column;min-height:0;}
-  #panel-fish .box .list{flex:1;min-height:0;overflow:auto;padding-right:4px;}
-  .item{display:flex;align-items:center;justify-content:space-between;padding:8px 10px;
-    border-radius:10px;background:#f3f7ff;margin-bottom:8px;}
-  .fish-anim{width:54px;height:54px;object-fit:contain;flex:0 0 auto;margin-right:6px;}
-  .item .name{font-weight:600;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
-  .item .price{color:var(--gold-ink);font-weight:700;margin:0 10px;white-space:nowrap;}
-  .item .price.gain{color:var(--green);}
-  button.act{border:none;border-radius:8px;padding:6px 14px;cursor:pointer;font-weight:600;
-    color:#fff;background:var(--gold-ink);transition:filter .15s;}
-  button.act:hover{filter:brightness(1.1);}
-  button.act:active{transform:translateY(1px);}
-  button.act.buy{background:#2f6fed;}
-  button.act.sell{background:var(--green);}
-  button.act.cannon{background:#2f6fed;width:100%;margin-bottom:8px;}
-  button.act.cannon.sel{outline:3px solid var(--gold);}
-  .empty{color:#9bb0d0;text-align:center;padding:18px 0;font-size:13px;}
-  .cannon-wrap{display:flex;justify-content:center;}
-  .cannon-card{background:var(--card);color:var(--ink);border-radius:16px;padding:22px;
-    width:340px;text-align:center;box-shadow:0 8px 24px rgba(0,0,0,.25);}
-  .cannon-card .lvl{font-size:22px;font-weight:800;color:var(--bg2);}
-  .cannon-card .sub{color:#5b7099;margin:6px 0 14px;font-size:13px;}
-  .cannon-card .refund{color:var(--green);font-size:13px;margin-bottom:14px;}
-  .mini{font-size:12px;color:#5b7099;margin:12px 0 6px;}
-  .toast{position:fixed;left:50%;top:18px;transform:translateX(-50%);
-    background:rgba(20,30,50,.85);backdrop-filter:blur(4px);color:#fff;
-    padding:10px 18px;border-radius:999px;font-size:14px;opacity:0;
-    transition:opacity .2s;pointer-events:none;z-index:9;}
-  .toast.show{opacity:1;}
-  ::-webkit-scrollbar{width:8px;}
-  ::-webkit-scrollbar-track{background:transparent;}
-  ::-webkit-scrollbar-thumb{background:rgba(255,255,255,.25);border-radius:4px;}
-  ::-webkit-scrollbar-thumb:hover{background:rgba(255,255,255,.4);}
-  /* 白底卡片内的滚动条：浅色 thumb 加白底等于隐形，改用深蓝半透明 */
-  .box ::-webkit-scrollbar-track{background:rgba(19,49,92,.06);}
-  .box ::-webkit-scrollbar-thumb{background:rgba(19,49,92,.35);border-radius:4px;}
-  .box ::-webkit-scrollbar-thumb:hover{background:rgba(19,49,92,.55);}
-</style>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>商城</title>
+  <style>
+    :root {
+      --bg0: #060a14;
+      --bg1: #0c1430;
+      --bg2: #14204a;
+      --panel: #0e1734;
+      --cell: #0a1024;
+      --gold: #f5c542;
+      --gold-2: #c9922b;
+      --gold-deep: #8a6414;
+      --line: rgba(245, 197, 66, .38);
+      --ink: #e9eef8;
+      --muted: #8fa0c4;
+      --blue: #3d7fd6;
+      --blue-2: #2456a8;
+      --green: #43c98a;
+      --green-2: #1e8a58;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html,
+    body {
+      margin: 0;
+      height: 100%;
+      font-family: "Microsoft YaHei", "PingFang SC", "Segoe UI", system-ui, sans-serif;
+    }
+
+    body {
+      height: 100vh;
+      overflow: hidden;
+      color: var(--ink);
+      background:
+        radial-gradient(1200px 500px at 50% -10%, #1b2c5e 0%, transparent 60%),
+        radial-gradient(800px 400px at 90% 110%, #12224e 0%, transparent 55%),
+        linear-gradient(160deg, var(--bg1), var(--bg0));
+    }
+
+    /* ---------- 描金外框 + 四角装饰 ---------- */
+    .frame {
+      position: absolute;
+      inset: 10px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: linear-gradient(180deg, rgba(16, 26, 58, .92), rgba(8, 12, 28, .94));
+      box-shadow: 0 0 0 1px rgba(0, 0, 0, .6), 0 0 24px rgba(0, 0, 0, .55),
+        inset 0 0 0 1px rgba(245, 197, 66, .12);
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    .frame::before {
+      content: "";
+      position: absolute;
+      inset: 4px;
+      border: 1px solid rgba(245, 197, 66, .16);
+      border-radius: 7px;
+      pointer-events: none;
+    }
+
+    .corner {
+      position: absolute;
+      width: 16px;
+      height: 16px;
+      border: 2px solid var(--gold);
+      filter: drop-shadow(0 0 3px rgba(245, 197, 66, .6));
+      pointer-events: none;
+    }
+
+    .corner.tl {
+      top: 5px;
+      left: 5px;
+      border-right: none;
+      border-bottom: none;
+      border-radius: 4px 0 0 0;
+    }
+
+    .corner.tr {
+      top: 5px;
+      right: 5px;
+      border-left: none;
+      border-bottom: none;
+      border-radius: 0 4px 0 0;
+    }
+
+    .corner.bl {
+      bottom: 5px;
+      left: 5px;
+      border-right: none;
+      border-top: none;
+      border-radius: 0 0 0 4px;
+    }
+
+    .corner.br {
+      bottom: 5px;
+      right: 5px;
+      border-left: none;
+      border-top: none;
+      border-radius: 0 0 4px 0;
+    }
+
+    /* ---------- 顶部：金币 / 标题 / 鱼池 ---------- */
+    header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 12px 22px 10px;
+      border-bottom: 1px solid rgba(245, 197, 66, .22);
+      background: linear-gradient(180deg, rgba(38, 58, 120, .35), transparent);
+    }
+
+    .coins {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 17px;
+      font-weight: 800;
+      color: var(--gold);
+      text-shadow: 0 0 8px rgba(245, 197, 66, .45);
+    }
+
+    .coin {
+      width: 16px;
+      height: 16px;
+      border-radius: 50%;
+      flex: 0 0 auto;
+      background: radial-gradient(circle at 35% 30%, #fff6c2, var(--gold) 55%, #a97a15);
+      box-shadow: 0 0 6px rgba(245, 197, 66, .7), inset 0 -1px 2px rgba(120, 80, 0, .6);
+    }
+
+    .title {
+      font-size: 21px;
+      font-weight: 900;
+      letter-spacing: 10px;
+      text-indent: 10px;
+      background: linear-gradient(180deg, #fff3c4, var(--gold) 45%, var(--gold-2));
+      -webkit-background-clip: text;
+      background-clip: text;
+      color: transparent;
+      filter: drop-shadow(0 2px 3px rgba(0, 0, 0, .6));
+      position: relative;
+    }
+
+    .title::before,
+    .title::after {
+      content: "";
+      position: absolute;
+      top: 50%;
+      width: 46px;
+      height: 1px;
+      background: linear-gradient(90deg, transparent, var(--gold));
+    }
+
+    .title::before {
+      right: calc(100% + 14px);
+    }
+
+    .title::after {
+      left: calc(100% + 14px);
+      transform: scaleX(-1);
+    }
+
+    .pool {
+      font-size: 13px;
+      color: var(--muted);
+      border: 1px solid rgba(245, 197, 66, .3);
+      padding: 4px 12px;
+      border-radius: 999px;
+      background: rgba(10, 16, 36, .6);
+    }
+
+    .pool b {
+      color: var(--gold);
+      font-weight: 700;
+    }
+
+    /* ---------- 主体：左分类 + 右内容 ---------- */
+    .main {
+      flex: 1;
+      display: flex;
+      min-height: 0;
+    }
+
+    .side {
+      width: 132px;
+      flex: 0 0 auto;
+      padding: 14px 10px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      border-right: 1px solid rgba(245, 197, 66, .22);
+      background: linear-gradient(180deg, rgba(20, 32, 74, .45), rgba(8, 12, 28, .3));
+    }
+
+    .cat {
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      padding: 11px 12px;
+      cursor: pointer;
+      border: 1px solid rgba(245, 197, 66, .28);
+      border-radius: 8px;
+      color: var(--muted);
+      background: linear-gradient(180deg, #16224a, #0b1230);
+      font-size: 14px;
+      font-weight: 700;
+      transition: all .15s;
+      user-select: none;
+    }
+
+    .cat .ic {
+      font-size: 20px;
+      line-height: 1;
+      filter: drop-shadow(0 0 4px rgba(245, 197, 66, .4));
+    }
+
+    .cat:hover {
+      color: var(--ink);
+      border-color: rgba(245, 197, 66, .55);
+    }
+
+    .cat.active {
+      color: #fff;
+      border-color: var(--gold);
+      background: linear-gradient(180deg, #31468c, #1a2a5e);
+      box-shadow: inset 0 0 12px rgba(245, 197, 66, .25), 0 0 8px rgba(245, 197, 66, .2);
+    }
+
+    .side .foot {
+      margin-top: auto;
+      font-size: 11px;
+      color: #5d6d92;
+      text-align: center;
+      line-height: 1.6;
+    }
+
+    .content {
+      flex: 1;
+      min-width: 0;
+      display: flex;
+      flex-direction: column;
+      padding: 14px 16px;
+    }
+
+    /* 购买 / 出售 子页签 */
+    .subtabs {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 12px;
+    }
+
+    .subtab {
+      padding: 6px 26px;
+      cursor: pointer;
+      border: 1px solid rgba(245, 197, 66, .3);
+      border-radius: 6px;
+      background: rgba(12, 20, 48, .7);
+      color: var(--muted);
+      font-size: 13px;
+      font-weight: 700;
+      transition: all .15s;
+      user-select: none;
+    }
+
+    .subtab:hover {
+      color: var(--ink);
+    }
+
+    .subtab.active {
+      color: #4a3508;
+      border-color: var(--gold);
+      background: linear-gradient(180deg, #f7d06a, #d9a02c);
+      box-shadow: 0 0 10px rgba(245, 197, 66, .35), inset 0 1px 0 rgba(255, 255, 255, .5);
+    }
+
+    /* ---------- 物品格子 ---------- */
+    .grid {
+      flex: 1;
+      min-height: 0;
+      overflow: auto;
+      padding: 2px 6px 2px 2px;
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 10px;
+      align-content: start;
+    }
+
+    .slot {
+      position: relative;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 6px;
+      padding: 9px 8px 8px;
+      border: 1px solid rgba(245, 197, 66, .28);
+      border-radius: 8px;
+      background: linear-gradient(180deg, #101a38, #090f22);
+      box-shadow: inset 0 0 0 1px rgba(0, 0, 0, .45);
+      transition: all .15s;
+    }
+
+    .slot:hover {
+      border-color: var(--gold);
+      transform: translateY(-1px);
+      box-shadow: 0 0 12px rgba(245, 197, 66, .28), inset 0 0 0 1px rgba(0, 0, 0, .45);
+    }
+
+    .slot .thumb {
+      width: 62px;
+      height: 62px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border: 1px solid rgba(245, 197, 66, .25);
+      border-radius: 8px;
+      background: radial-gradient(circle at 50% 42%, rgba(64, 98, 178, .28), rgba(8, 12, 28, .65) 70%);
+    }
+
+    .slot .thumb img {
+      max-width: 56px;
+      max-height: 56px;
+      object-fit: contain;
+    }
+
+    .slot .thumb .emo {
+      font-size: 34px;
+      filter: drop-shadow(0 0 6px rgba(245, 197, 66, .5));
+    }
+
+    .slot .nm {
+      width: 100%;
+      text-align: center;
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--ink);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .slot .lv {
+      font-size: 11px;
+      color: var(--muted);
+    }
+
+    .slot .pr {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      font-size: 13px;
+      font-weight: 800;
+      color: var(--gold);
+      text-shadow: 0 0 6px rgba(245, 197, 66, .35);
+    }
+
+    .slot.sell .pr {
+      color: var(--green);
+      text-shadow: 0 0 6px rgba(67, 201, 138, .35);
+    }
+
+    /* 魔域风金属按钮 */
+    .btn {
+      width: 100%;
+      padding: 5px 0;
+      border-radius: 6px;
+      font-size: 13px;
+      font-weight: 800;
+      color: #fff;
+      cursor: pointer;
+      user-select: none;
+      text-align: center;
+      border: 1px solid rgba(245, 197, 66, .55);
+      background: linear-gradient(180deg, #4a8de8, #2456a8);
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, .35), inset 0 -2px 0 rgba(0, 0, 0, .25),
+        0 2px 4px rgba(0, 0, 0, .4);
+      text-shadow: 0 1px 1px rgba(0, 0, 0, .45);
+      transition: filter .12s, transform .05s;
+    }
+
+    .btn:hover {
+      filter: brightness(1.12);
+    }
+
+    .btn:active {
+      transform: translateY(1px);
+    }
+
+    .btn.gold {
+      color: #4a3508;
+      text-shadow: 0 1px 0 rgba(255, 255, 255, .4);
+      background: linear-gradient(180deg, #f7d06a, #d9a02c);
+    }
+
+    .btn.green {
+      background: linear-gradient(180deg, #43c98a, #1e8a58);
+    }
+
+    .btn.disabled {
+      filter: grayscale(.8) brightness(.7);
+      cursor: not-allowed;
+    }
+
+    .empty {
+      grid-column: 1/-1;
+      text-align: center;
+      color: #5d6d92;
+      padding: 40px 0;
+      font-size: 13px;
+    }
+
+    /* ---------- 炮台面板 ---------- */
+    .cannon {
+      flex: 1;
+      min-height: 0;
+      overflow: auto;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 14px;
+      padding: 6px;
+    }
+
+    .cannon-card {
+      width: 380px;
+      max-width: 100%;
+      text-align: center;
+      padding: 20px 22px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: linear-gradient(180deg, #13204a, #0a1024);
+      box-shadow: inset 0 0 0 1px rgba(0, 0, 0, .5), 0 0 18px rgba(0, 0, 0, .4);
+    }
+
+    .cannon-preview {
+      height: 150px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin-bottom: 6px;
+      border: 1px solid rgba(245, 197, 66, .22);
+      border-radius: 8px;
+      background: radial-gradient(circle at 50% 60%, rgba(64, 98, 178, .28), rgba(8, 12, 28, .65) 70%);
+    }
+
+    .cannon-preview img {
+      max-width: 130px;
+      max-height: 140px;
+      object-fit: contain;
+      filter: drop-shadow(0 4px 8px rgba(0, 0, 0, .6));
+    }
+
+    .cannon-card .big {
+      font-size: 24px;
+      font-weight: 900;
+      background: linear-gradient(180deg, #fff3c4, var(--gold) 50%, var(--gold-2));
+      -webkit-background-clip: text;
+      background-clip: text;
+      color: transparent;
+      filter: drop-shadow(0 2px 2px rgba(0, 0, 0, .5));
+    }
+
+    .cannon-card .sub {
+      color: var(--muted);
+      font-size: 13px;
+      margin: 8px 0 14px;
+    }
+
+    .cannon-card .refund {
+      color: var(--green);
+      font-size: 13px;
+      margin: 12px 0 6px;
+    }
+
+    .cannon-card .btn {
+      width: 100%;
+      padding: 8px 0;
+      font-size: 14px;
+    }
+
+    .cannon-models {
+      width: 380px;
+      max-width: 100%;
+    }
+
+    .cannon-models .cap {
+      font-size: 13px;
+      color: var(--muted);
+      margin: 4px 0 8px;
+      text-align: center;
+    }
+
+    .models-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 10px;
+    }
+
+    .model.sel {
+      border-color: var(--gold);
+      box-shadow: 0 0 12px rgba(245, 197, 66, .35), inset 0 0 0 1px rgba(0, 0, 0, .45);
+    }
+
+    /* 提示浮层 */
+    .toast {
+      position: fixed;
+      left: 50%;
+      top: 20px;
+      transform: translateX(-50%);
+      background: rgba(12, 20, 48, .92);
+      border: 1px solid var(--line);
+      color: var(--gold);
+      padding: 9px 22px;
+      border-radius: 999px;
+      font-size: 13px;
+      font-weight: 700;
+      box-shadow: 0 4px 16px rgba(0, 0, 0, .5), 0 0 10px rgba(245, 197, 66, .2);
+      opacity: 0;
+      transition: opacity .2s;
+      pointer-events: none;
+      z-index: 9;
+    }
+
+    .toast.show {
+      opacity: 1;
+    }
+
+    /* 深色界面：浅色半透明滚动条 */
+    ::-webkit-scrollbar {
+      width: 8px;
+    }
+
+    ::-webkit-scrollbar-track {
+      background: rgba(255, 255, 255, .05);
+      border-radius: 4px;
+    }
+
+    ::-webkit-scrollbar-thumb {
+      background: rgba(245, 197, 66, .35);
+      border-radius: 4px;
+    }
+
+    ::-webkit-scrollbar-thumb:hover {
+      background: rgba(245, 197, 66, .55);
+    }
+  </style>
 </head>
+
 <body>
-  <header>
-    <div class="coins"><span class="ico"></span><span id="coins">金币：0</span></div>
-    <div class="pool" id="pool">鱼池 0/0</div>
-  </header>
-  <div class="tabs">
-    <button class="tab active" data-tab="fish" onclick="switchTab('fish')">🐟 鱼</button>
-    <button class="tab" data-tab="cannon" onclick="switchTab('cannon')">💥 炮台</button>
-  </div>
-  <div class="panel active" id="panel-fish">
-    <div class="cols">
-      <div class="box"><h3>购买（加入鱼池）</h3><div id="buyList" class="list"></div></div>
-      <div class="box"><h3>出售（鱼池现有）</h3><div id="sellList" class="list"></div></div>
+  <div class="frame">
+    <span class="corner tl"></span><span class="corner tr"></span>
+    <span class="corner bl"></span><span class="corner br"></span>
+
+    <header>
+      <div class="coins"><span class="coin"></span><span id="coins">金币：0</span></div>
+      <div class="title">商 城</div>
+      <div class="pool">鱼池 <b id="pool">0/0</b></div>
+    </header>
+
+    <div class="main">
+      <nav class="side">
+        <div class="cat active" data-cat="fish" onclick="switchCat('fish')">
+          <span class="ic">🐟</span>鱼类
+        </div>
+        <div class="cat" data-cat="cannon" onclick="switchCat('cannon')">
+          <span class="ic">💥</span>炮台
+        </div>
+
+      </nav>
+
+      <div class="content">
+        <!-- 鱼类：购买 / 出售 -->
+        <div id="cat-fish" style="display:flex;flex-direction:column;flex:1;min-height:0;">
+          <div class="subtabs">
+            <div class="subtab active" data-mode="buy" onclick="switchFishMode('buy')">购 买</div>
+            <div class="subtab" data-mode="sell" onclick="switchFishMode('sell')">出 售</div>
+          </div>
+          <div class="grid" id="fishGrid"></div>
+        </div>
+
+        <!-- 炮台 -->
+        <div id="cat-cannon" class="cannon" style="display:none;">
+          <div class="cannon-card" id="cannonCard"></div>
+          <div class="cannon-models" id="cannonModels"></div>
+        </div>
+      </div>
     </div>
-  </div>
-  <div class="panel" id="panel-cannon">
-    <div class="cannon-wrap"><div class="cannon-card" id="cannonCard"></div></div>
   </div>
   <div class="toast" id="toast"></div>
 
-<script>
-  let DATA = null;
-  let CUR_TAB = 'fish';
+  <script>
+    let DATA = null;
+    let CUR_CAT = 'fish';      // fish | cannon
+    let FISH_MODE = 'buy';     // buy  | sell
 
-  function toast(msg){
-    const t = document.getElementById('toast');
-    t.textContent = msg; t.classList.add('show');
-    clearTimeout(t._h); t._h = setTimeout(() => t.classList.remove('show'), 1500);
-  }
-
-  function esc(s){
-    return String(s).replace(/[&<>"]/g, c =>
-      ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
-  }
-
-  function switchTab(tab){
-    CUR_TAB = tab;
-    document.querySelectorAll('.tab').forEach(b =>
-      b.classList.toggle('active', b.dataset.tab === tab));
-    document.querySelectorAll('.panel').forEach(p =>
-      p.classList.toggle('active', p.id === 'panel-' + tab));
-    if (DATA) render();
-  }
-
-  async function refreshShop(silent){
-    try{
-      DATA = await window.pywebview.api.get_data();
-      document.getElementById('coins').textContent = '金币：' + DATA.coins;
-      document.getElementById('pool').textContent =
-        '鱼池 ' + DATA.fish_count + '/' + DATA.max_fish;
-      render();
-      if (!silent) toast('已刷新');
-    }catch(e){ toast('加载失败：' + e); }
-  }
-
-  function render(){
-    if (!DATA) return;
-    if (CUR_TAB === 'fish') renderFish(); else renderCannon();
-  }
-
-  function renderFish(){
-    const buy = document.getElementById('buyList');
-    buy.innerHTML = '';
-    DATA.species.forEach(s => {
-      const row = document.createElement('div'); row.className = 'item';
-      if (s.gif) {
-        const img = document.createElement('img'); img.className = 'fish-anim';
-        img.src = s.gif; img.alt = s.label;
-        row.appendChild(img);
-      }
-      const name = document.createElement('span'); name.className = 'name'; name.textContent = s.label;
-      const price = document.createElement('span'); price.className = 'price';
-      price.textContent = s.price + ' 金币';
-      const b = document.createElement('button'); b.className = 'act buy'; b.textContent = '购买';
-      b.onclick = () => doBuy(s.path);
-      row.appendChild(name); row.appendChild(price); row.appendChild(b);
-      buy.appendChild(row);
-    });
-    if (!DATA.species.length) buy.innerHTML = '<div class="empty">暂无可购买鱼类</div>';
-
-    const sell = document.getElementById('sellList');
-    sell.innerHTML = '';
-    if (!DATA.fishes.length){ sell.innerHTML = '<div class="empty">鱼池里还没有鱼</div>'; return; }
-    DATA.fishes.forEach(f => {
-      const row = document.createElement('div'); row.className = 'item';
-      if (f.gif) {
-        const img = document.createElement('img'); img.className = 'fish-anim';
-        img.src = f.gif; img.alt = f.label;
-        row.appendChild(img);
-      }
-      const name = document.createElement('span'); name.className = 'name';
-      name.textContent = f.label + ' Lv' + f.level;
-      const price = document.createElement('span'); price.className = 'price gain';
-      price.textContent = '+' + f.price;
-      const b = document.createElement('button'); b.className = 'act sell'; b.textContent = '出售';
-      b.onclick = () => doSell(f.id);
-      row.appendChild(name); row.appendChild(price); row.appendChild(b);
-      sell.appendChild(row);
-    });
-  }
-
-  function renderCannon(){
-    const c = document.getElementById('cannonCard');
-    let html = '<div class="lvl">炮台 Lv' + DATA.cannon_level + ' / ' + DATA.cannon_max + '</div>';
-    if (DATA.cannon_level < DATA.cannon_max){
-      html += '<div class="sub">升级到 Lv' + (DATA.cannon_level + 1) +
-              ' 需要 ' + DATA.upgrade_cost + ' 金币</div>';
-      html += '<button class="act cannon" onclick="doUpgrade()">升级炮台</button>';
-    } else {
-      html += '<div class="sub">炮台已满级</div>';
+    function toast(msg) {
+      const t = document.getElementById('toast');
+      t.textContent = msg; t.classList.add('show');
+      clearTimeout(t._h); t._h = setTimeout(() => t.classList.remove('show'), 1500);
     }
-    if (DATA.cannon_level > 1){
-      html += '<div class="refund">出售炮台（降到 Lv' + (DATA.cannon_level - 1) +
-              '）返还 ' + DATA.sell_cannon_refund + ' 金币</div>';
-      html += '<button class="act cannon" style="background:#e07b39" onclick="doSellCannon()">出售炮台</button>';
-    } else {
-      html += '<div class="refund">炮台已是最低等级，无法出售</div>';
+
+    function esc(s) {
+      return String(s).replace(/[&<>"]/g, c =>
+        ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
     }
-    if (DATA.cannon_count > 0){
-      html += '<div class="mini">切换炮台型号（免费）</div>';
-      for (let i = 0; i < DATA.cannon_count; i++){
-        const sel = i === DATA.cannon_index ? ' sel' : '';
-        html += '<button class="act cannon' + sel + '" onclick="doSetCannon(' + i + ')">炮台 ' + (i + 1) + '</button>';
+
+    /* 把字符串安全地嵌进单引号包裹的 JS 字面量（Windows 路径含 \ 与可能的 '） */
+    function jsStr(s) {
+      return String(s).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+    }
+
+    function switchCat(cat) {
+      CUR_CAT = cat;
+      document.querySelectorAll('.cat').forEach(b =>
+        b.classList.toggle('active', b.dataset.cat === cat));
+      document.getElementById('cat-fish').style.display = cat === 'fish' ? 'flex' : 'none';
+      document.getElementById('cat-cannon').style.display = cat === 'cannon' ? 'flex' : 'none';
+      if (DATA) render();
+    }
+
+    function switchFishMode(mode) {
+      FISH_MODE = mode;
+      document.querySelectorAll('.subtab').forEach(b =>
+        b.classList.toggle('active', b.dataset.mode === mode));
+      if (DATA) renderFish();
+    }
+
+    async function refreshShop(silent) {
+      try {
+        DATA = await window.pywebview.api.get_data();
+        document.getElementById('coins').textContent = '金币：' + DATA.coins;
+        document.getElementById('pool').textContent =
+          DATA.fish_count + '/' + DATA.max_fish;
+        render();
+        if (!silent) toast('已刷新');
+      } catch (e) { toast('加载失败：' + e); }
+    }
+
+    function render() {
+      if (!DATA) return;
+      if (CUR_CAT === 'fish') renderFish(); else renderCannon();
+    }
+
+    /* 物品格子：缩略图 + 名称 + 金币价 + 按钮 */
+    function slot(thumbHtml, name, sub, priceHtml, btnHtml, isSell) {
+      return '<div class="slot' + (isSell ? ' sell' : '') + '">' +
+        '<div class="thumb">' + thumbHtml + '</div>' +
+        '<div class="nm" title="' + esc(name) + '">' + esc(name) + '</div>' +
+        (sub ? '<div class="lv">' + esc(sub) + '</div>' : '') +
+        '<div class="pr"><span class="coin"></span>' + priceHtml + '</div>' +
+        btnHtml + '</div>';
+    }
+
+    function renderFish() {
+      const grid = document.getElementById('fishGrid');
+      const full = DATA.fish_count >= DATA.max_fish;
+      let html = '';
+
+      if (FISH_MODE === 'buy') {
+        if (!DATA.species.length) {
+          grid.innerHTML = '<div class="empty">暂无可购买鱼类</div>'; return;
+        }
+        DATA.species.forEach(s => {
+          const thumb = s.gif
+            ? '<img src="' + s.gif + '" alt="' + esc(s.label) + '">'
+            : '<span class="emo">🐟</span>';
+          const btn = full
+            ? '<div class="btn gold disabled">鱼池已满</div>'
+            : '<div class="btn gold" onclick="doBuy(\'' + jsStr(s.path) + '\')">购 买</div>';
+          html += slot(thumb, s.label, '', s.price, btn, false);
+        });
+      } else {
+        if (!DATA.fishes.length) {
+          grid.innerHTML = '<div class="empty">鱼池里还没有鱼</div>'; return;
+        }
+        DATA.fishes.forEach(f => {
+          const thumb = f.gif
+            ? '<img src="' + f.gif + '" alt="' + esc(f.label) + '">'
+            : '<span class="emo">🐟</span>';
+          html += slot(thumb, f.label, 'Lv' + f.level, '+' + f.price,
+            '<div class="btn green" onclick="doSell(' + f.id + ')">出 售</div>', true);
+        });
+      }
+      grid.innerHTML = html;
+    }
+
+    function renderCannon() {
+      const c = document.getElementById('cannonCard');
+      let html = (DATA.cannon_img
+        ? '<div class="cannon-preview"><img src="' + DATA.cannon_img + '" alt="炮台"></div>'
+        : '');
+      html += '<div class="big">炮台 Lv' + DATA.cannon_level + ' / ' + DATA.cannon_max + '</div>';
+      if (DATA.cannon_level < DATA.cannon_max) {
+        html += '<div class="sub">升级到 Lv' + (DATA.cannon_level + 1) +
+          ' 需要 ' + DATA.upgrade_cost + ' 金币</div>' +
+          '<div class="btn gold" onclick="doUpgrade()">升 级 炮 台</div>';
+      } else {
+        html += '<div class="sub">炮台已满级</div>';
+      }
+      if (DATA.cannon_level > 1) {
+        html += '<div class="refund">出售炮台（降到 Lv' + (DATA.cannon_level - 1) +
+          '）返还 ' + DATA.sell_cannon_refund + ' 金币</div>' +
+          '<div class="btn" style="background:linear-gradient(180deg,#e08a4a,#b35a1e)" onclick="doSellCannon()">出 售 炮 台</div>';
+      } else {
+        html += '<div class="refund">炮台已是最低等级，无法出售</div>';
+      }
+      c.innerHTML = html;
+
+      const m = document.getElementById('cannonModels');
+      if (DATA.cannon_count > 0) {
+        let mh = '<div class="cap">切换炮台型号（免费）</div><div class="models-grid">';
+        (DATA.cannons || []).forEach((cn, i) => {
+          const sel = i === DATA.cannon_index ? ' sel' : '';
+          const thumb = cn.img
+            ? '<img src="' + cn.img + '" alt="' + esc(cn.label) + '">'
+            : '<span class="emo">💥</span>';
+          mh += '<div class="slot model' + sel + '" onclick="doSetCannon(' + i + ')"' +
+            ' title="' + esc(cn.label) + '">' +
+            '<div class="thumb">' + thumb + '</div>' +
+            '<div class="nm">' + esc(cn.label) + '</div></div>';
+        });
+        mh += '</div>';
+        m.innerHTML = mh;
+      } else {
+        m.innerHTML = '';
       }
     }
-    c.innerHTML = html;
-  }
 
-  async function doBuy(path){
-    const r = await window.pywebview.api.buy(path);
-    toast(r.msg); if (r.ok) refreshShop(true);
-  }
-  async function doSell(id){
-    const r = await window.pywebview.api.sell(id);
-    toast(r.msg); if (r.ok) refreshShop(true);
-  }
-  async function doUpgrade(){
-    const r = await window.pywebview.api.upgrade();
-    toast(r.msg); if (r.ok) refreshShop(true);
-  }
-  async function doSellCannon(){
-    const r = await window.pywebview.api.sell_cannon();
-    toast(r.msg); if (r.ok) refreshShop(true);
-  }
-  async function doSetCannon(idx){
-    const r = await window.pywebview.api.set_cannon(idx);
-    toast(r.msg); if (r.ok) refreshShop(true);
-  }
+    async function doBuy(path) {
+      const r = await window.pywebview.api.buy(path);
+      toast(r.msg); if (r.ok) refreshShop(true);
+    }
+    async function doSell(id) {
+      const r = await window.pywebview.api.sell(id);
+      toast(r.msg); if (r.ok) refreshShop(true);
+    }
+    async function doUpgrade() {
+      const r = await window.pywebview.api.upgrade();
+      toast(r.msg); if (r.ok) refreshShop(true);
+    }
+    async function doSellCannon() {
+      const r = await window.pywebview.api.sell_cannon();
+      toast(r.msg); if (r.ok) refreshShop(true);
+    }
+    async function doSetCannon(idx) {
+      const r = await window.pywebview.api.set_cannon(idx);
+      toast(r.msg); if (r.ok) refreshShop(true);
+    }
 
-  window.addEventListener('pywebviewready', () => refreshShop(true));
-</script>
+    window.addEventListener('pywebviewready', () => refreshShop(true));
+  </script>
 </body>
+
 </html>
