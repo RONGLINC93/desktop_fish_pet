@@ -9,6 +9,10 @@
 _开发中，变更将记录于此；发布时本行替换为发布日期。_
 
 ### 变更
+- 修复隐藏小鱼后信息面板仍显示：`toggle_hide`（托盘「显示小鱼」/设置页开关）此前只对鱼窗口调 `ShowWindow(SW_HIDE)`，而悬停信息卡是独立置顶分层窗口，且主循环的命中轮询不判断 `hidden`，导致隐藏小鱼后信息卡仍会弹出或残留。现在隐藏时立即收起信息卡（含延迟隐藏中的），主循环在 `hidden` 状态下也不再驱动信息卡的显示/刷新，取消隐藏后恢复悬停弹出。
+- 修复开炮音效在停止开炮后仍持续播放：捕鱼模式此前无发射冷却，按住空格时系统自动连发（约 30 次/秒）会被全部执行，每发都起一个后台播放线程（0.13 秒开炮音），长按后松手时已起播的几十个线程仍会把声音继续放好几秒。现新增发射冷却 `FIRE_COOLDOWN = 0.15` 秒（`FishingOverlay.tick` 按 `monotonic` 放行，超出的连发按键直接丢弃，取最近一次按键位置发射），连发速率限制在约 6~7 发/秒，松手后最多还剩不到 0.3 秒尾音。
+
+### 变更
 - 整理 `app/` 目录结构：新增 `data/`（运行期数据）、`html/`（网页 UI）、`resource/`（素材）三个子目录——`fish_pet_config.json`（及错误日志）移入 `data/`，`settings.html` 与 `shop/shop.html` 移入 `html/`（原 `shop/` 目录删除），`鱼/`、`炮台/`（及可选的 `音效/`）移入 `resource/`。`desktop_fish_pet.py` 相应改为 `RESOURCE_DIR`/`DATA_DIR`/`HTML_DIR` 常量寻址，并在启动时 `makedirs(DATA_DIR)`（发布包不含该目录，保证首跑可写配置）；鱼/炮台/信息卡路径均为相对根目录派生，移动对运行时透明。同步更新 `.gitignore`（忽略 `app/data/` 下配置与日志）、`README.md` 文件结构与说明、`build_win_zip.py` 文档。git 以 rename 记录，保留历史。
 - 新增 `app/support/` 目录存放辅助文件，`requirements.txt` 从 `app/` 根移入其中；`app/启动小鱼.bat`、根目录 `开发启动小鱼.bat`、`README.md` 安装命令与文件结构、`build_win_zip.py` 文档中的依赖路径同步改为 `support/requirements.txt`（或 `app/support/requirements.txt`）。
 - 炮台菜单新增「退出捕鱼模式」：捕鱼模式下右键炮台本体弹出的菜单，在「更换炮台」下方加分隔线并新增「退出捕鱼模式」一项，点击即退出捕鱼模式（复用 `App.toggle_fishing`）。

@@ -96,6 +96,9 @@ RUN_KEY_PATH = r"Software\Microsoft\Windows\CurrentVersion\Run"
 RUN_VALUE_NAME = "DesktopFishPet"
 # 捕鱼经济：捕获奖励 = 鱼价值 × 炮台等级 × 该倍率（原为 ×1，低等级几乎不赚钱）
 REWARD_MULT = 5
+# 炮台发射冷却（秒）：限制按住空格的连发速率（系统自动连发约 30 次/秒），
+# 否则一次长按会瞬间起播几十个开炮音，松手后声音仍会持续好几秒
+FIRE_COOLDOWN = 0.15
 # 商城经济
 FISH_BUY_MULT = 2         # 买鱼价格 = 鱼价值 × 此倍数（下限见 fish_buy_price）；大幅下调让买鱼轻松
 FISH_SELL_RATE = 1.8      # 卖鱼返还 = 鱼价值 × 等级 × 此比例（养大才能赚钱）
@@ -1190,6 +1193,7 @@ class FishingOverlay:
         self.L, self.T, self.W, self.H = L, T, R - L, B - T
         self.mx, self.my = self.W // 2, self.H // 2  # 鼠标（叠加层本地坐标）
         self.pending_fires = []
+        self._last_fire_at = None  # 上次成功发射的时刻（monotonic）；None 表示尚未发射
         self.bullets = []
         self.effects = []
         self.floaters = []  # 掉血/捕获浮动文字
@@ -1591,8 +1595,14 @@ class FishingOverlay:
         return self._FISH_VALUE.get(name, (5, 0.25))
 
     def tick(self, dt):
-        for (sx, sy) in self.pending_fires:
-            self._fire(sx, sy)
+        if self.pending_fires:
+            # 发射冷却：按住空格时系统自动连发约 30 次/秒，直接全打出去会瞬间
+            # 起播几十个开炮音，松手后声音仍持续好几秒。按冷却放行，多余按键丢弃
+            now = time.monotonic()
+            if self._last_fire_at is None or now - self._last_fire_at >= FIRE_COOLDOWN:
+                sx, sy = self.pending_fires[-1]  # 取最近一次按键位置（连发时鼠标一般未动）
+                self._fire(sx, sy)
+                self._last_fire_at = now
         self.pending_fires.clear()
 
         # 子弹推进 + 碰撞
@@ -1917,12 +1927,16 @@ class App:
         else:
             # 非捕鱼模式：用轮询命中检测驱动信息卡，不依赖 Tk 的 <Enter>/<Leave>
             # （鱼窗口每帧 geometry 移动，Leave 事件时序不可靠，会立刻隐藏）
-            hovered = self._fish_under_cursor()
-            if hovered is not None:
-                self.fish_info.show(hovered)            # 指着鱼：显示并取消延迟隐藏
-            elif self.fish_info.visible and self.fish_info._hide_at is None:
-                self.fish_info.hide()                   # 离开鱼：仅挂一次延迟，不每帧重置（否则永不隐藏）
-            self.fish_info.update()                     # 跟随鱼重绘；延迟到期则真正隐藏
+            if self.hidden:
+                # 小鱼已隐藏：不再弹信息卡，把残留（含延迟中的）立刻收起
+                self.fish_info.hide(immediate=True)
+            else:
+                hovered = self._fish_under_cursor()
+                if hovered is not None:
+                    self.fish_info.show(hovered)        # 指着鱼：显示并取消延迟隐藏
+                elif self.fish_info.visible and self.fish_info._hide_at is None:
+                    self.fish_info.hide()               # 离开鱼：仅挂一次延迟，不每帧重置（否则永不隐藏）
+                self.fish_info.update()                 # 跟随鱼重绘；延迟到期则真正隐藏
             self.floater_overlay.update(dt)             # 繁殖提示等浮动文字（到期自动清除）
         self._save_ticks += 1
         if self._save_ticks >= 180:  # 约每 6 秒自动存一次位置
@@ -2061,6 +2075,9 @@ class App:
             user32.ShowWindow(f.hwnd, flag)
             if not self.hidden:
                 f.render()
+        if self.hidden:
+            # 信息卡是独立置顶窗口，不随鱼窗口隐藏，需立刻收起（含延迟中的）
+            self.fish_info.hide(immediate=True)
         try:
             self.tray.update_menu()
         except Exception:
