@@ -449,12 +449,12 @@ class SoundManager:
 
 # ---------------------------------------------------------------- 信息卡绘制
 INFO_CARD_W = 186
-INFO_CARD_H = 78
+INFO_CARD_H = 110
 INFO_CARD_LINGER = 2.0  # 鼠标离开鱼后，信息卡继续跟随鱼显示的秒数（鱼在游动，便于看清）
 
 
 def draw_fish_info_card(img, draw, fish, x, y, font):
-    """在 (x, y) 处画一张玻璃卡片样式的鱼信息卡：名字/等级、成长进度、血量。"""
+    """在 (x, y) 处画一张玻璃卡片样式的鱼信息卡：名字/等级、成长、血量、繁衍倒计时、价值、速度。"""
     cw, ch = INFO_CARD_W, INFO_CARD_H
     # 投影
     try:
@@ -527,11 +527,46 @@ def draw_fish_info_card(img, draw, fish, x, y, font):
                 draw.rounded_rectangle([bx + 2, by + 2, bx + fw - 2, by + bh // 2],
                                        radius=max(1, bh // 2 - 2), fill=hl)
 
-    _shadow_text(x + 18, y + 32, "成长", (185, 215, 255))
-    _bar(y + 33, getattr(fish, "growth", 0.0), (115, 220, 145))
-    _shadow_text(x + 18, y + 52, "HP", (255, 160, 150))
-    hpr = getattr(fish, "hp", 1) / max(1, getattr(fish, "max_hp", 1))
-    _bar(y + 53, hpr, (235, 85, 75))
+    def _right(text, by, fill):
+        _shadow_text(x + cw - 8 - _tw(text), by, text, fill)
+
+    # 成长（带百分比）
+    growth = getattr(fish, "growth", 0.0)
+    _shadow_text(x + 18, y + 30, "成长", (185, 215, 255))
+    _bar(y + 31, growth, (115, 220, 145))
+    _right("%d%%" % int(growth * 100), y + 30, (200, 255, 210))
+
+    # HP（带数值）
+    hp = getattr(fish, "hp", 1)
+    maxhp = getattr(fish, "max_hp", 1)
+    hpr = hp / max(1, maxhp)
+    _shadow_text(x + 18, y + 50, "HP", (255, 160, 150))
+    _bar(y + 51, hpr, (235, 85, 75))
+    _right("%d/%d" % (int(hp), int(maxhp)), y + 50, (255, 200, 190))
+
+    # 繁衍倒计时（仅成年鱼有意义）
+    mature = getattr(fish, "is_mature", None) and fish.is_mature()
+    by_breed = y + 70
+    if mature:
+        bt = getattr(fish, "breed_timer", BREED_COOLDOWN)
+        ratio = max(0.0, min(1.0, 1.0 - bt / BREED_COOLDOWN))
+        left = max(0, int(math.ceil(bt)))
+        _shadow_text(x + 18, by_breed, "繁衍", (255, 205, 120))
+        _bar(by_breed + 1, ratio, (255, 205, 120))
+        _right("%ds" % left, by_breed, (255, 225, 160))
+    else:
+        _shadow_text(x + 18, by_breed, "繁衍", (150, 160, 180))
+        _shadow_text(x + 52, by_breed, "Lv%d成年可繁殖" % MATURE_LEVEL, (150, 160, 180))
+
+    # 底部：价值 + 速度
+    try:
+        value = int(fish.app._fish_info(fish)[0])
+    except Exception:
+        value = 0
+    speed = int(getattr(fish, "base_speed", 0))
+    _shadow_text(x + 18, y + 90, "价值 %d" % value, (255, 220, 120))
+    _shadow_text(x + 96, y + 90, "速度 %d" % speed, (160, 220, 255))
+
     return cw, ch
 
 
@@ -1971,12 +2006,15 @@ class App:
         if born == 0:
             return None
         self.sounds.play("birth")
-        # 捕鱼模式下弹个提示；普通模式有新鱼出现 + 音效作为反馈
+        # 捕鱼模式与普通模式都给出繁殖提示：捕鱼模式弹在捕鱼浮层，普通模式弹在桌面主窗口
+        floater = {
+            "x": parent.x + parent.w / 2, "y": parent.y - 22,
+            "text": "繁殖了%d条小鱼!" % born, "t": 0.0, "life": 1.2, "vy": 40,
+            "color": (255, 205, 120)}
         if self.fishing_overlay is not None:
-            self.fishing_overlay.floaters.append({
-                "x": parent.x + parent.w / 2, "y": parent.y - 22,
-                "text": "繁殖了%d条小鱼!" % born, "t": 0.0, "life": 1.2, "vy": 40,
-                "color": (255, 205, 120)})
+            self.fishing_overlay.floaters.append(floater)
+        else:
+            self.floaters.append(floater)
         self.save_config()
         return True
 
