@@ -2113,6 +2113,14 @@ class App:
                 self.fish_info.destroy()
         except Exception:
             pass
+        # 先关闭已打开的设置 / 商城窗口，避免退出时它们残留
+        for name in ("_settings_window", "_shop_window"):
+            w = getattr(self, name, None)
+            if w is not None:
+                try:
+                    w.destroy()
+                except Exception:
+                    pass
         self.root.destroy()
         # 关闭 pywebview 宿主窗口，让主线程的 webview.start() 返回并退出进程
         try:

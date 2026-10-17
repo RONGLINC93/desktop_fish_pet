@@ -39,6 +39,7 @@
   .chip:hover{filter:brightness(.97);}
   .chip.sel{background:var(--gold);color:var(--gold-ink);}
   .chip.sel-cannon{outline:3px solid var(--gold);}
+  .mfhl{border-color:var(--gold)!important;background:#fffbe6;box-shadow:0 0 0 2px rgba(242,201,76,.3);}
   .btn{border:none;border-radius:10px;padding:9px 16px;cursor:pointer;font-weight:600;
     color:#fff;background:var(--blue);transition:filter .15s;margin-right:8px;}
   .btn:hover{filter:brightness(1.08);}
@@ -61,7 +62,14 @@
   </header>
   <div class="body">
     <div class="box"><h3>通用设置</h3><div id="switches"></div></div>
-    <div class="box"><h3>鱼池上限</h3><div class="chips" id="maxfish"></div></div>
+    <div class="box"><h3>鱼池上限</h3><div class="chips" id="maxfish"></div>
+      <div style="margin-top:10px;display:flex;gap:8px;align-items:center;">
+        <span class="hint">自定义</span>
+        <input id="mfCustom" type="number" min="1" max="100" placeholder="1~100"
+               style="width:88px;padding:6px 8px;border-radius:8px;border:1px solid #cdd8ee;">
+        <button class="btn" onclick="doMaxFishCustom()">应用</button>
+      </div>
+    </div>
     <div class="box"><h3>炮台皮肤</h3><div class="chips" id="cannons"></div></div>
     <div class="box"><h3>鱼池管理</h3>
       <button class="btn" onclick="doAdd()">放一条小鱼</button>
@@ -120,6 +128,7 @@
     // 鱼池上限
     const mf = document.getElementById('maxfish');
     mf.innerHTML = '';
+    const custom = !DATA.max_fish_choices.includes(DATA.max_fish);
     DATA.max_fish_choices.forEach(n => {
       const b = document.createElement('button');
       b.className = 'chip' + (n === DATA.max_fish ? ' sel' : '');
@@ -127,6 +136,16 @@
       b.onclick = () => callApi('set_max_fish', n);
       mf.appendChild(b);
     });
+    if (custom){
+      const cb = document.createElement('button');
+      cb.className = 'chip sel';
+      cb.textContent = '自定义 ' + DATA.max_fish + ' 条';
+      cb.onclick = () => document.getElementById('mfCustom').focus();
+      mf.appendChild(cb);
+    }
+    const inp = document.getElementById('mfCustom');
+    inp.value = DATA.max_fish;
+    inp.classList.toggle('mfhl', custom);
     // 炮台皮肤
     const cn = document.getElementById('cannons');
     cn.innerHTML = '';
@@ -153,6 +172,14 @@
     }catch(e){ toast('操作失败：' + e); }
   }
 
+  async function doMaxFishCustom(){
+    const inp = document.getElementById('mfCustom');
+    let v = parseInt(inp.value, 10);
+    if (isNaN(v)) { toast('请输入 1~100 的数字'); return; }
+    v = Math.max(1, Math.min(100, v));
+    inp.value = v;
+    await callApi('set_max_fish', v);
+  }
   async function doAdd(){ await callApi('add_fish'); }
   async function doAddRandom(){ await callApi('add_fish_random'); }
   async function doQuit(){ await callApi('quit'); }
