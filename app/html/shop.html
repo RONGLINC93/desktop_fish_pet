@@ -69,7 +69,13 @@
     transition:opacity .2s;pointer-events:none;z-index:9;}
   .toast.show{opacity:1;}
   ::-webkit-scrollbar{width:8px;}
+  ::-webkit-scrollbar-track{background:transparent;}
   ::-webkit-scrollbar-thumb{background:rgba(255,255,255,.25);border-radius:4px;}
+  ::-webkit-scrollbar-thumb:hover{background:rgba(255,255,255,.4);}
+  /* 白底卡片内的滚动条：浅色 thumb 加白底等于隐形，改用深蓝半透明 */
+  .box ::-webkit-scrollbar-track{background:rgba(19,49,92,.06);}
+  .box ::-webkit-scrollbar-thumb{background:rgba(19,49,92,.35);border-radius:4px;}
+  .box ::-webkit-scrollbar-thumb:hover{background:rgba(19,49,92,.55);}
 </style>
 </head>
 <body>
