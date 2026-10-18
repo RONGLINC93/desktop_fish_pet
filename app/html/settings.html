@@ -74,7 +74,6 @@
         <button class="btn" onclick="doMaxFishCustom()">应用</button>
       </div>
     </div>
-    <div class="box"><h3>炮台皮肤</h3><div class="chips" id="cannons"></div></div>
     <div class="box"><h3>鱼池管理</h3>
       <button class="btn" onclick="doAdd()">放一条小鱼</button>
       <button class="btn" onclick="doAddRandom()">随机放几条鱼</button>
@@ -113,6 +112,72 @@
     }catch(e){ toast('加载失败：' + e); }
   }
 
+  // 捕鱼模式二级设置行：炮台皮肤，缩进挂在「捕鱼模式」开关下
+  function buildCannonSkinRow(){
+    const box = document.createElement('div');
+    box.style.cssText = 'margin:0 10px 8px;padding:8px 10px;background:#f8fbff;' +
+      'border-left:3px solid #e3ebf9;border-radius:0 10px 10px 0;';
+    const head = document.createElement('div');
+    head.style.cssText = 'display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;margin-bottom:6px;';
+    const t = document.createElement('span');
+    t.style.cssText = 'font-weight:600;font-size:13px;';
+    t.textContent = '└ 炮台皮肤';
+    const h = document.createElement('span');
+    h.style.cssText = 'font-size:12px;color:#5b7099;';
+    h.textContent = DATA.fishing
+      ? '捕鱼模式下右键炮台也可随时更换'
+      : '捕鱼模式开启时生效；开启后右键炮台也可更换';
+    head.appendChild(t); head.appendChild(h);
+    box.appendChild(head);
+    if (DATA.cannon_count === 0){
+      const none = document.createElement('span');
+      none.style.cssText = 'font-size:12px;color:#5b7099;';
+      none.textContent = '未找到炮台素材';
+      box.appendChild(none);
+      return box;
+    }
+    const chips = document.createElement('div');
+    chips.className = 'chips';
+    for (let i = 0; i < DATA.cannon_count; i++){
+      const b = document.createElement('button');
+      b.className = 'chip' + (i === DATA.cannon_index ? ' sel-cannon' : '');
+      b.textContent = '炮台 ' + (i + 1);
+      b.onclick = () => callApi('set_cannon', i);
+      chips.appendChild(b);
+    }
+    box.appendChild(chips);
+    return box;
+  }
+
+  // 钓鱼模式二级设置行：最低挣脱概率（每秒），缩进挂在「钓鱼模式」开关下
+  function buildEscapeMinRow(){
+    const box = document.createElement('div');
+    box.style.cssText = 'margin:0 10px 8px;padding:8px 10px;background:#f8fbff;' +
+      'border-left:3px solid #e3ebf9;border-radius:0 10px 10px 0;';
+    const head = document.createElement('div');
+    head.style.cssText = 'display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;margin-bottom:6px;';
+    const t = document.createElement('span');
+    t.style.cssText = 'font-weight:600;font-size:13px;';
+    t.textContent = '└ 最低挣脱概率（每秒）';
+    const h = document.createElement('span');
+    h.style.cssText = 'font-size:12px;color:#5b7099;';
+    h.textContent = DATA.goldminer
+      ? '便宜小鱼也至少按此概率挣扎；0 = 完全按鱼价值计算'
+      : '钓鱼模式开启时生效；0 = 完全按鱼价值计算';
+    head.appendChild(t); head.appendChild(h);
+    const chips = document.createElement('div');
+    chips.className = 'chips';
+    (DATA.escape_min_choices || [0, 0.02, 0.05, 0.10]).forEach(c => {
+      const b = document.createElement('button');
+      b.className = 'chip' + (Math.abs(c - DATA.escape_min) < 1e-9 ? ' sel' : '');
+      b.textContent = c === 0 ? '0%（按价值）' : (Math.round(c * 100) + '%');
+      b.onclick = () => callApi('set_escape_min', c);
+      chips.appendChild(b);
+    });
+    box.appendChild(head); box.appendChild(chips);
+    return box;
+  }
+
   function render(){
     if (!DATA) return;
     // 开关
@@ -129,6 +194,10 @@
       b.onclick = () => callApi(s.api);
       row.appendChild(name); row.appendChild(b);
       sw.appendChild(row);
+      // 捕鱼模式的二级设置：炮台皮肤，紧跟「捕鱼模式」开关之下
+      if (s.key === 'fishing') sw.appendChild(buildCannonSkinRow());
+      // 钓鱼模式的二级设置：最低挣脱概率，紧跟「钓鱼模式」开关之下
+      if (s.key === 'goldminer') sw.appendChild(buildEscapeMinRow());
     });
     // 屏幕选择
     const sc = document.getElementById('screens');
@@ -162,19 +231,6 @@
     const inp = document.getElementById('mfCustom');
     inp.value = DATA.max_fish;
     inp.classList.toggle('mfhl', custom);
-    // 炮台皮肤
-    const cn = document.getElementById('cannons');
-    cn.innerHTML = '';
-    if (DATA.cannon_count === 0){
-      cn.innerHTML = '<span class="hint">未找到炮台素材</span>';
-    }
-    for (let i = 0; i < DATA.cannon_count; i++){
-      const b = document.createElement('button');
-      b.className = 'chip' + (i === DATA.cannon_index ? ' sel-cannon' : '');
-      b.textContent = '炮台 ' + (i + 1);
-      b.onclick = () => callApi('set_cannon', i);
-      cn.appendChild(b);
-    }
   }
 
   async function callApi(method, arg){

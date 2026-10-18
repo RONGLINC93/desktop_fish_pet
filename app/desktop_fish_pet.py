@@ -106,6 +106,13 @@ CANNON_UPGRADE_BASE = 200  # 炮台升到下一级花费 = 此基数 × 当前�
 CANNON_SELL_RATE = 0.6     # 炮台降级返还 = 上一级升级花费 × 此比例
 CANNON_MAX_LEVEL = 99      # 炮台等级上限（与 load_config 的 min(CANNON_MAX_LEVEL, …) 一致）
 CANNON_VISUAL_CAP = 10      # 炮台贴图视觉缩放封顶等级：高于此等级不再变大，避免炮台铺满屏幕
+# 钓鱼模式挣脱：收线时鱼可能挣脱（每秒概率 = 基础值 × (1 + 价值/放大系数)，封顶）；
+# 鱼越大/越贵收线越慢（carry_speed 越小），暴露时间更长，累积挣脱概率自然更高
+ESCAPE_RATE_BASE = 0.05     # 基础挣脱概率（每秒）
+ESCAPE_VALUE_SCALE = 20.0   # 价值放大系数：价值每 +20，每秒概率翻倍
+ESCAPE_RATE_MAX = 0.40      # 挣脱概率上限（每秒），防止高价鱼几乎必跑
+# 最低挣脱概率（每秒）可选档位：便宜小鱼的保底挣扎概率；0=完全按鱼价值公式计算
+ESCAPE_MIN_CHOICES = [0.0, 0.02, 0.05, 0.10]
 
 # 鱼的基础价值（捕获奖励基数）与捕获率；商城买卖价格也基于此计算
 FISH_VALUE = {
@@ -451,6 +458,7 @@ class SoundManager:
         "poke":  [(0.10, 600, 720, 0.35, "sine")],
         "levelup": [(0.08, 520, 780, 0.5, "sine"), (0.10, 780, 1040, 0.5, "sine")],
         "birth": [(0.10, 660, 880, 0.5, "sine"), (0.12, 880, 1180, 0.45, "sine")],
+        "escape": [(0.20, 620, 140, 0.5, "saw")],  # 鱼挣脱：下滑音，像鱼滑脱溜走
     }
     _SAMPLE_RATE = 44100
 
@@ -1954,6 +1962,9 @@ class GoldMinerOverlay:
     顶端中央垂下一条会钟摆摆动的钩绳；空格放钩（沿当前角度伸出），飞行中再按
     空格立即收回；钩到鱼则收回（鱼越大收回越慢），回到顶端时按「鱼价值 × 等
     级」给金币并把鱼收走。与捕鱼模式（炮台）互斥，作为独立的托盘开关存在。
+
+    收线过程中鱼可能挣脱：概率随时间累积（越贵越躁），挣脱后鱼受惊猛窜逃走，
+    金币落空；价值低的小鱼几乎不会跑，高价稀有鱼需要一定运气才能收回。
     """
 
     def __init__(self, app):
@@ -2200,7 +2211,13 @@ class GoldMinerOverlay:
             speed = self.retract_base if self.carry_fish is None \
                 else self.retract_base * self.carry_speed
             self.len -= speed * dt
-            if self.len <= self.rest_len:
+            if self.carry_fish is not None \
+                    and random.random() < self._escape_rate(self.carry_fish) * dt:
+                # 收线挣扎中挣脱：鱼受惊逃走，这一趟白忙
+                self._escape(self.carry_fish)
+                self.carry_fish = None
+                self.state = "idle"
+            elif self.len <= self.rest_len:
                 self.len = self.rest_len
                 if self.carry_fish is not None:
                     self._collect(self.carry_fish)
@@ -2218,6 +2235,36 @@ class GoldMinerOverlay:
                 self.effects.remove(e)
 
         self._render()
+
+    def _escape_rate(self, fish):
+        """收线时该鱼的挣脱概率（每秒）：按价值计算，且不低于设置的最低概率。"""
+        value, _ = self._fish_info(fish)
+        rate = min(ESCAPE_RATE_MAX,
+                   ESCAPE_RATE_BASE * (1.0 + value / ESCAPE_VALUE_SCALE))
+        return max(getattr(self.app, "escape_min", 0.0), rate)
+
+    def _escape(self, fish):
+        """鱼挣脱：恢复桌面窗口、受惊猛窜逃走，飘「挣脱!」并播滑脱音效。"""
+        try:
+            user32.ShowWindow(fish.hwnd, SW_SHOW)  # 恢复桌面鱼，避免凭空消失
+        except Exception:
+            pass
+        tipx, tipy = self._tip()
+        try:
+            # 受惊冲刺：短时间高速乱窜后恢复正常游动
+            ang = random.uniform(0, 2 * math.pi)
+            sp = fish.base_speed * 3.5
+            fish.vx = math.cos(ang) * sp
+            fish.vy = math.sin(ang) * sp * 0.5
+            fish.dart_t = random.uniform(0.5, 0.9)
+            fish.mode = "swim"
+            fish.timer = random.uniform(2.0, 4.0)
+        except Exception:
+            pass
+        self.floaters.append({"x": tipx, "y": tipy + 26,
+                              "text": "挣脱!", "t": 0.0, "life": 1.0,
+                              "vy": 45, "color": (255, 120, 90)})
+        self.app.sounds.play("escape")
 
     def _collect(self, fish):
         value, _ = self._fish_info(fish)
@@ -2325,7 +2372,7 @@ class GoldMinerOverlay:
                                     outline=(120, 150, 200, 220), width=2)
         self._hud_text(x0 + 16, y0 + 11, "金币：%d" % self.app.coins,
                        (255, 222, 120, 255), font)
-        self._hud_text(x0 + 16, y0 + 35, "空格放钩 · 再按收回",
+        self._hud_text(x0 + 16, y0 + 35, "空格放钩 · 鱼会挣脱",
                        (205, 235, 255, 255), font)
 
     def _hud_text(self, x, y, text, fill, font):
@@ -2467,6 +2514,7 @@ class App:
         self.autostart_enabled = self.is_autostart_enabled()  # 以注册表现状为准
         self.cross_screen = True  # 跨屏游走开关（screen==-1 时为真）；load_config 可能覆盖
         self.screen = -1  # 鱼游走的屏幕：-1=全部屏幕（虚拟桌面），0..n-1=指定显示器；load_config 可能覆盖
+        self.escape_min = 0.0  # 钓鱼模式最低挣脱概率（每秒）：小鱼保底；0=按价值公式；load_config 可能覆盖
         self.mouse_penetration = False  # 鼠标穿透：整窗点击穿透到桌面；load_config 可能覆盖
         self.max_fish = MAX_FISH  # 鱼数量上限；load_config 可能覆盖
         self._save_ticks = 0
@@ -2517,6 +2565,7 @@ class App:
                 "berserk": self.berserk_enabled, "fishing": self.fishing,
                 "cross_screen": self.cross_screen, "screen": self.screen,
                 "mouse_penetration": self.mouse_penetration,
+                "escape_min": self.escape_min,
                 "max_fish": self.max_fish}
         for f in self.fishes:
             rel = os.path.relpath(f.species[1], FISH_ROOT)
@@ -2570,6 +2619,12 @@ class App:
         else:  # 旧配置无 screen 字段，由 cross_screen 推导
             self.screen = -1 if self.cross_screen else 0
         self.mouse_penetration = bool(data.get("mouse_penetration", False))
+        if "escape_min" in data:  # 最低挣脱概率（每秒），夹在合法范围
+            try:
+                em = float(data["escape_min"])
+            except (TypeError, ValueError):
+                em = 0.0
+            self.escape_min = max(0.0, min(ESCAPE_RATE_MAX, em))
         if isinstance(data.get("max_fish"), (int, float)):
             self.max_fish = max(1, min(MAX_FISH_LIMIT, int(data["max_fish"])))
         return out or None
@@ -2932,6 +2987,16 @@ class App:
             self.tray.update_menu()
         except Exception:
             pass
+
+    def set_escape_min(self, v):
+        """设置钓鱼模式最低挣脱概率（每秒）：便宜小鱼也至少按此概率挣扎，
+        0 表示完全按鱼价值公式计算。取值夹在 [0, ESCAPE_RATE_MAX]。"""
+        try:
+            v = float(v)
+        except (TypeError, ValueError):
+            return
+        self.escape_min = max(0.0, min(ESCAPE_RATE_MAX, v))
+        self.save_config()
 
     # ---------- 鼠标穿透 ----------
     def _set_ex_style(self, hwnd, style, on):
@@ -3589,6 +3654,8 @@ class SettingsAPI:
             "monitors": get_monitors(),
             "mouse_penetration": app.mouse_penetration,
             "berserk_enabled": app.berserk_enabled,
+            "escape_min": app.escape_min,
+            "escape_min_choices": list(ESCAPE_MIN_CHOICES),
             "cannon_index": app.cannon_index,
             "cannon_count": len(find_cannons()),
         }
@@ -3635,6 +3702,13 @@ class SettingsAPI:
         def _t():
             self.app.set_max_fish(int(v))
             return {"ok": True, "msg": "已设置上限 %d 条" % int(v)}
+        return self._run_on_main(_t)
+
+    def set_escape_min(self, v):
+        def _t():
+            self.app.set_escape_min(float(v))
+            pct = "%.0f%%" % (float(v) * 100)
+            return {"ok": True, "msg": "最低挣脱概率已设为 %s/秒" % pct}
         return self._run_on_main(_t)
 
     def set_cannon(self, idx):
