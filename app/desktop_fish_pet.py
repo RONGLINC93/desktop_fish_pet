@@ -2220,8 +2220,9 @@ class GoldMinerOverlay:
         if max(iw, ih) > maxd:
             s = maxd / max(iw, ih)
             im = im.resize((max(1, int(iw * s)), max(1, int(ih * s))), Image.LANCZOS)
+        # 鱼挂在钩尖下方：水平居中，鱼顶在绳端下方一点，身体向下垂
         x0 = int(x - im.width / 2)
-        y0 = int(y - im.height / 2)
+        y0 = int(y + 16)
         try:
             self.img.paste(im, (x0, y0), im)
         except Exception:
@@ -2310,11 +2311,11 @@ class GoldMinerOverlay:
         # 顶端滑轮座
         self.draw.ellipse([px - 14, py - 14, px + 14, py + 14], fill=(60, 70, 95, 235))
         self.draw.ellipse([px - 7, py - 7, px + 7, py + 7], fill=(150, 170, 210, 255))
-        # 钩（最初的矢量画法，直接画在画布上）
-        self._draw_hook(tipx, tipy)
-        # 被钩住的鱼
+        # 先画被钩住的鱼（挂在钩尖下方），再把钩压在鱼顶，像钩子咬住鱼
         if self.carry_fish is not None:
             self._draw_carry_fish(self.carry_fish, tipx, tipy)
+        # 钩（鱼钩贴图，钩眼对准绳端并按绳角旋转）
+        self._draw_hook(tipx, tipy)
         # 特效
         for e in self.effects:
             p = e["t"] / e["life"]
