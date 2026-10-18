@@ -1,0 +1,20 @@
+{
+  "typeCheckingMode": "standard",
+  "reportConstantRedefinition": "none",
+  "reportOperatorIssue": "none",
+  "reportAttributeAccessIssue": "none",
+  "reportArgumentType": "none",
+  "reportOptionalMemberAccess": "none",
+  "reportUninitializedInstanceVariable": "none",
+  "reportMissingImports": "warning",
+  "reportUnknownMemberType": "none",
+  "reportUnknownArgumentType": "none",
+  "reportUnknownVariableType": "none",
+  "reportUnknownParameterType": "none",
+  "reportUnknownLambdaType": "none",
+  "reportMissingParameterType": "none",
+  "reportMissingTypeStubs": "none",
+  "reportUnannotatedClassAttribute": "none",
+  "reportUnusedParameter": "none",
+  "reportAny": "none"
+}

@@ -8,6 +8,9 @@
 
 _开发中，变更将记录于此；发布时本行替换为发布日期。_
 
+### 优化
+- 新增 `pyrightconfig.json`：本项目是零类型标注的脚本型应用（tkinter + PIL + ctypes + pywebview，大量 WinDLL 动态属性 / PIL 常量 / 可选 numpy），编辑器默认 basedpyright recommended 严模式会产生 ~72 ERROR + ~900 WARNING 的噪声（均非功能 bug）。现降为 `standard` 并关闭 `reportConstantRedefinition`/`reportAttributeAccessIssue`/`reportArgumentType`/`reportOptionalMemberAccess`/`reportUninitializedInstanceVariable`/`reportUnknown*` 等严格扩展，全工作区 ERROR 72→0、WARNING→1（仅 numpy 可选导入，代码有纯 Python 回退，保留 warning 提示）。
+
 ### 新增
 - 钓鱼模式右键菜单：钓鱼模式下右键屏幕任意处弹出菜单，含「退出钓鱼模式」一项，点击即退出钓鱼模式（复用 `App.toggle_goldminer`，与捕鱼模式右键炮台弹「退出捕鱼模式」保持一致的交互；叠加层绑定 `<Button-3>`，菜单挂主窗口）。
 
