@@ -703,12 +703,12 @@
     }
 
     /* 购买数量弹窗 */
-    let modalPath = null;      // 当前要购买的鱼种路径
+    let modalKey = null;        // 当前要购买的鱼种序号（与后端 species_list 同序）
     let MODAL_PRICE = 0;       // 单价
     let MODAL_QTY = 1;         // 选择的数量
 
-    function openBuyModal(path, label, price) {
-      modalPath = path;
+    function openBuyModal(key, label, price) {
+      modalKey = key;
       MODAL_PRICE = Number(price) || 0;
       MODAL_QTY = 1;
       document.getElementById('bmFish').textContent = label;
@@ -735,13 +735,14 @@
     }
     function closeBuyModal() {
       document.getElementById('buyModal').style.display = 'none';
-      modalPath = null;
+      modalKey = null;
     }
     function confirmBuy() {
-      if (!modalPath) return;
+      if (modalKey === null || modalKey === undefined) return;
+      const k = modalKey;
       const q = MODAL_QTY;
       closeBuyModal();
-      doBuy(modalPath, q);
+      doBuy(k, q);
     }
 
     async function refreshShop(silent) {
@@ -779,14 +780,14 @@
         if (!DATA.species.length) {
           grid.innerHTML = '<div class="empty">暂无可购买鱼类</div>'; return;
         }
-        DATA.species.forEach(s => {
+        DATA.species.forEach((s, i) => {
           const thumb = s.gif
             ? '<img src="' + s.gif + '" alt="' + esc(s.label) + '">'
             : '<span class="emo">🐟</span>';
           const btn = full
             ? '<div class="btn gold disabled">鱼池已满</div>'
-            : '<div class="btn gold" onclick="openBuyModal(\'' + jsStr(s.path) +
-              '\', \'' + jsStr(s.label) + '\', ' + s.price + ')">购 买</div>';
+            : '<div class="btn gold" onclick="openBuyModal(' + i +
+              ', \'' + jsStr(s.label) + '\', ' + s.price + ')">购 买</div>';
           html += slot(thumb, s.label, '', s.price, btn, false);
         });
       } else {
@@ -846,8 +847,8 @@
       }
     }
 
-    async function doBuy(path, qty) {
-      const r = await window.pywebview.api.buy(path, qty || 1);
+    async function doBuy(key, qty) {
+      const r = await window.pywebview.api.buy(key, qty || 1);
       toast(r.msg); if (r.ok) refreshShop(true);
     }
     async function doSell(id) {

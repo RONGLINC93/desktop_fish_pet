@@ -1885,6 +1885,446 @@ class FishingOverlay:
 
 
 # ---------------------------------------------------------------- 应用
+class GoldMinerOverlay:
+    """黄金矿工模式：全屏透明叠加层 + 全局鼠标/键盘钩子。
+
+    顶端中央垂下一条会钟摆摆动的钩绳；空格放钩（沿当前角度伸出），钩到鱼则
+    收回（鱼越大收回越慢），回到顶端时按「鱼价值 × 等级」给金币并把鱼收走。
+    与捕鱼模式（炮台）互斥，作为独立的托盘开关存在。
+    """
+
+    def __init__(self, app):
+        self.app = app
+        L, T, R, B = app.workarea
+        self.L, self.T, self.W, self.H = L, T, R - L, B - T
+        self.mx, self.my = self.W // 2, self.H // 2
+        self._FISH_VALUE = FISH_VALUE
+
+        # 钩子状态机：idle（摆动）/ firing（伸出）/ retract（收回）
+        self.state = "idle"
+        self.angle = 0.0                       # 与竖直向下方向的夹角（弧度）
+        self.swing_dir = 1
+        self.swing_speed = 1.7                  # 摆动角速度（弧度/秒）
+        self.swing_max = math.radians(80)
+        self.rest_len = 60
+        self.max_len = int(math.hypot(self.W, self.H)) + 80
+        self.len = self.rest_len
+        self.extend_speed = 1500.0
+        self.retract_base = 1000.0
+        self.carry_fish = None
+        self.carry_speed = 1.0
+        self.floaters = []
+        self.effects = []
+        self._carry_cache = {}     # (id(fish), frame) -> 已还原的直乘 alpha 图像
+        self._cur_x, self._cur_y = 0, 0
+        self._mon_index = None
+        self.pivot = (self.W / 2, 16)
+
+        try:
+            self.font = load_cjk_font(14)
+        except Exception:
+            self.font = None
+        try:
+            self.hud_font = load_cjk_font(16)
+        except Exception:
+            self.hud_font = None
+        try:
+            self.big_font = load_cjk_font(22)
+        except Exception:
+            self.big_font = self.font
+
+        self.win = tk.Toplevel(app.root)
+        self.win.overrideredirect(True)
+        self.win.attributes("-topmost", True)
+        self.win.configure(bg="black")
+        self.win.geometry(f"+{L}+{T}")
+        self.win.update_idletasks()
+
+        self.hwnd = user32.GetAncestor(self.win.winfo_id(), GA_ROOT)
+        ex = user32.GetWindowLongPtrW(self.hwnd, GWL_EXSTYLE)
+        user32.SetWindowLongPtrW(self.hwnd, GWL_EXSTYLE, ex | WS_EX_LAYERED | WS_EX_TOOLWINDOW)
+
+        self.hdc_screen = user32.GetDC(0)
+        self.hdc_mem = gdi32.CreateCompatibleDC(self.hdc_screen)
+        self.hbm = None
+        self.old_hbm = None
+        self.bits = None
+        self.dib_size = (0, 0)
+        self._make_dib(self.W, self.H)
+
+        self.img = Image.new("RGBA", (self.W, self.H), (0, 0, 0, 0))
+        self.draw = ImageDraw.Draw(self.img)
+
+        self._hook = None
+        self._kb_hook = None
+        self._install_hook()
+        self._render()
+
+        pt = POINT()
+        user32.GetCursorPos(ctypes.byref(pt))
+        self._cur_x, self._cur_y = pt.x, pt.y
+        idx = self._monitor_index_at(pt.x, pt.y)
+        if idx is not None:
+            self._set_monitor(idx)
+
+    # ---------- 屏幕跟随（与捕鱼模式同理） ----------
+    def _monitor_index_at(self, x, y):
+        mons = get_monitors()
+        if not mons:
+            return None
+        for m in mons:
+            rl, rt, rr, rb = m["rect"]
+            if rl <= x <= rr and rt <= y <= rb:
+                return m["index"]
+        return mons[0]["index"]
+
+    def _set_monitor(self, index):
+        mons = get_monitors()
+        mon = None
+        for m in mons:
+            if m["index"] == index:
+                mon = m
+                break
+        if mon is None and mons:
+            mon = mons[0]
+        if mon is None:
+            return
+        ml, mt, mr, mb = mon["work"]
+        self.L, self.T, self.W, self.H = ml, mt, mr - ml, mb - mt
+        self.win.geometry("%dx%d+%d+%d" % (self.W, self.H, ml, mt))
+        self.win.update_idletasks()
+        self._make_dib(self.W, self.H)
+        self.img = Image.new("RGBA", (self.W, self.H), (0, 0, 0, 0))
+        self.draw = ImageDraw.Draw(self.img)
+        self.pivot = (self.W / 2, 16)
+        self.max_len = int(math.hypot(self.W, self.H)) + 80
+        self.floaters = []
+        self.effects = []
+        self._carry_cache = {}
+        self._mon_index = index
+
+    # ---------- Win32 图层 ----------
+    def _make_dib(self, w, h):
+        if self.hbm:
+            gdi32.SelectObject(self.hdc_mem, self.old_hbm)
+            gdi32.DeleteObject(self.hbm)
+        bi = BITMAPINFO()
+        bi.bmiHeader.biSize = ctypes.sizeof(BITMAPINFOHEADER)
+        bi.bmiHeader.biWidth = w
+        bi.bmiHeader.biHeight = -h
+        bi.bmiHeader.biPlanes = 1
+        bi.bmiHeader.biBitCount = 32
+        bi.bmiHeader.biCompression = 0
+        bits = ctypes.c_void_p()
+        self.hbm = gdi32.CreateDIBSection(self.hdc_screen, ctypes.byref(bi), 0,
+                                          ctypes.byref(bits), None, 0)
+        self.bits = bits
+        self.old_hbm = gdi32.SelectObject(self.hdc_mem, self.hbm)
+        self.dib_size = (w, h)
+
+    # ---------- 钩子 ----------
+    def _install_hook(self):
+        self._hook_cb = HOOKPROC(self._hook_proc)
+        self._hook = user32.SetWindowsHookExW(WH_MOUSE_LL, self._hook_cb,
+                                              kernel32.GetModuleHandleW(None), 0)
+        self._kb_cb = HOOKPROC(self._keyboard_proc)
+        self._kb_hook = user32.SetWindowsHookExW(WH_KEYBOARD_LL, self._kb_cb,
+                                                 kernel32.GetModuleHandleW(None), 0)
+
+    def _hook_proc(self, nCode, wParam, lParam):
+        if nCode == 0:
+            hs = MSLLHOOKSTRUCT.from_address(lParam)
+            if wParam == WM_MOUSEMOVE:
+                self._cur_x, self._cur_y = hs.pt.x, hs.pt.y
+                self.mx = hs.pt.x - self.L
+                self.my = hs.pt.y - self.T
+            # 左键在矿工模式不发射（放钩用空格）
+        return user32.CallNextHookEx(self._hook if self._hook else 0, nCode, wParam, lParam)
+
+    def _keyboard_proc(self, nCode, wParam, lParam):
+        if nCode == 0 and wParam == WM_KEYDOWN:
+            ks = KBDLLHOOKSTRUCT.from_address(lParam)
+            if ks.vkCode == VK_SPACE and self.state == "idle":
+                self.state = "firing"
+                self.len = self.rest_len
+                self.app.sounds.play("poke")
+        return user32.CallNextHookEx(self._kb_hook if self._kb_hook else 0, nCode, wParam, lParam)
+
+    # ---------- 逻辑 ----------
+    def _tip(self):
+        px, py = self.pivot
+        return (px + math.sin(self.angle) * self.len,
+                py + math.cos(self.angle) * self.len)
+
+    def _fish_at(self, x, y):
+        for f in self.app.fishes:
+            fx = f.x - self.L
+            fy = f.y - self.T
+            if fx <= x <= fx + f.w and fy <= y <= fy + f.h:
+                return f
+        return None
+
+    def _fish_info(self, fish):
+        name = os.path.basename(fish.species[1])
+        return self._FISH_VALUE.get(name, (5, 0.25))
+
+    def tick(self, dt):
+        cx, cy = self._cur_x, self._cur_y
+        idx = self._monitor_index_at(cx, cy)
+        if idx is not None and idx != self._mon_index:
+            self._set_monitor(idx)
+
+        if self.state == "idle":
+            self.angle += self.swing_dir * self.swing_speed * dt
+            if self.angle > self.swing_max:
+                self.angle = self.swing_max
+                self.swing_dir = -1
+            elif self.angle < -self.swing_max:
+                self.angle = -self.swing_max
+                self.swing_dir = 1
+            self.len = self.rest_len
+        elif self.state == "firing":
+            self.len += self.extend_speed * dt
+            tipx, tipy = self._tip()
+            hit = self._fish_at(tipx, tipy)
+            if hit is not None:
+                self.carry_fish = hit
+                user32.ShowWindow(hit.hwnd, SW_HIDE)  # 藏起桌面鱼，避免双重绘制
+                sizef = (hit.w + hit.h) / 2.0
+                self.carry_speed = max(0.16, 240.0 / (sizef + 140.0))  # 大鱼收得更慢
+                self.state = "retract"
+            elif self.len >= self.max_len or tipy > self.H + 30 \
+                    or tipx < -30 or tipx > self.W + 30:
+                self.state = "retract"
+        elif self.state == "retract":
+            speed = self.retract_base if self.carry_fish is None \
+                else self.retract_base * self.carry_speed
+            self.len -= speed * dt
+            if self.len <= self.rest_len:
+                self.len = self.rest_len
+                if self.carry_fish is not None:
+                    self._collect(self.carry_fish)
+                    self.carry_fish = None
+                self.state = "idle"
+
+        for fl in list(self.floaters):
+            fl["t"] += dt
+            fl["y"] -= fl["vy"] * dt
+            if fl["t"] >= fl["life"]:
+                self.floaters.remove(fl)
+        for e in list(self.effects):
+            e["t"] += dt
+            if e["t"] >= e["life"]:
+                self.effects.remove(e)
+
+        self._render()
+
+    def _collect(self, fish):
+        value, _ = self._fish_info(fish)
+        reward = value * fish.level
+        self.app.coins += reward
+        self.app.remove_fish(fish)  # 内部会 destroy 鱼窗口
+        self.app.sounds.play("catch")
+        self.effects.append({"kind": "catch", "x": self.pivot[0],
+                             "y": self.pivot[1] + 24, "t": 0.0, "life": 0.5})
+        self.floaters.append({"x": self.pivot[0], "y": self.pivot[1] + 40,
+                              "text": "钓到! +%d" % reward, "t": 0.0, "life": 1.1,
+                              "vy": 45, "color": (120, 255, 120)})
+
+    # ---------- 绘制 ----------
+    def _draw_hook(self, x, y):
+        d = self.draw
+        d.ellipse([x - 7, y - 7, x + 7, y + 7], fill=(205, 215, 235, 255))
+        d.line([(x - 7, y + 1), (x - 11, y + 13)], fill=(205, 215, 235, 255), width=3)
+        d.line([(x + 7, y + 1), (x + 11, y + 13)], fill=(205, 215, 235, 255), width=3)
+
+    def _draw_carry_fish(self, f, x, y):
+        # 用鱼当前的朝向（桌面鱼可能朝左游，用 f.left），避免拉上来后镜像变样
+        imgs = f.right if getattr(f, "facing_right", True) else f.left
+        if not imgs:
+            return
+        fi = f.frame % len(imgs)
+        raw, (iw, ih) = imgs[fi]
+        # species_frames 缓存的是 _premultiply 后的字节（预乘 alpha、R/B 已对调），
+        # 不是 PIL.Image。先还原成直乘 alpha 的 PIL 图像（颜色顺序仍保留对调，
+        # 留给本叠加层 _render 导出时的 R/B 互换再修正），并缓存避免每帧重算。
+        key = (id(f), fi)
+        im = self._carry_cache.get(key)
+        if im is None:
+            try:
+                base = Image.frombytes("RGBA", (iw, ih), raw)
+            except Exception:
+                return
+            im = self._unpremultiply(base)
+            self._carry_cache[key] = im
+        # 按鱼实际尺寸绘制（封顶避免过大），保持与桌面鱼一致
+        maxd = 160
+        if max(iw, ih) > maxd:
+            s = maxd / max(iw, ih)
+            im = im.resize((max(1, int(iw * s)), max(1, int(ih * s))), Image.LANCZOS)
+        x0 = int(x - im.width / 2)
+        y0 = int(y - im.height / 2)
+        try:
+            self.img.paste(im, (x0, y0), im)
+        except Exception:
+            pass
+
+    def _unpremultiply(self, im):
+        """把 _premultiply 出来的预乘字节还原成【正常顺序的直乘 alpha】图像。
+
+        _premultiply 产出的字节序是 [B*a, G*a, R*a, A]（预乘、且 R/B 已对调），
+        因为桌面鱼直接喂给 UpdateLayeredWindow 的 BGRA DIB。而本叠加层 _render
+        是用 merge((b,g,r,a)) 把 self.img 当【正常 RGBA】再转成 BGRA，所以贴到
+        self.img 上必须是正常顺序的直乘图像。这里在还原直乘的同时把 R/B 对调回来，
+        否则整条鱼红蓝互换、和桌面鱼完全不一样。
+        """
+        try:
+            import numpy as np
+            a = np.frombuffer(im.tobytes(), dtype=np.uint8).reshape(im.height, im.width, 4)
+            out = a.astype(np.uint16).copy()
+            alpha = out[:, :, 3].astype(np.uint16)
+            am = np.where(alpha == 0, 1, alpha)
+            # 原字节: [B*a, G*a, R*a, A] -> 除回 alpha 得直乘，并把 0/2 通道对调成 [R, G, B, A]
+            rr = (out[:, :, 2] * 255 + am // 2) // am   # 第3字节 = R*a -> 红
+            bb = (out[:, :, 0] * 255 + am // 2) // am   # 第1字节 = B*a -> 蓝
+            out[:, :, 0] = rr
+            out[:, :, 1] = (out[:, :, 1] * 255 + am // 2) // am
+            out[:, :, 2] = bb
+            out[:, :, 3] = alpha
+            return Image.frombytes("RGBA", (im.width, im.height), out.astype(np.uint8).tobytes())
+        except Exception:
+            px = im.load()
+            w, h = im.size
+            for yy in range(h):
+                for xx in range(w):
+                    ba, ga, ra, al = px[xx, yy]  # frombytes(raw): R=B*a, G=G*a, B=R*a
+                    if al == 0 or al == 255:
+                        # 全不透明/透明无需除，仅把 R/B 对调成正常顺序
+                        px[xx, yy] = (ra, ga, ba, al)
+                    else:
+                        inv = 255.0 / al
+                        px[xx, yy] = (min(255, int(round(ra * inv))),
+                                      min(255, int(round(ga * inv))),
+                                      min(255, int(round(ba * inv))), al)
+            return im
+
+    def _draw_hud(self):
+        font = self.hud_font or self.font
+        x0, y0, w, h = 12, 12, 250, 60
+        self.hud = (x0, y0, x0 + w, y0 + h)
+        self.draw.rounded_rectangle([x0, y0, x0 + w, y0 + h], radius=12,
+                                    fill=(18, 24, 42, 205),
+                                    outline=(120, 150, 200, 220), width=2)
+        self._hud_text(x0 + 16, y0 + 11, "金币：%d" % self.app.coins,
+                       (255, 222, 120, 255), font)
+        self._hud_text(x0 + 16, y0 + 35, "空格放钩 · 钩到鱼收回",
+                       (205, 235, 255, 255), font)
+
+    def _hud_text(self, x, y, text, fill, font):
+        if font:
+            self.draw.text((x + 1, y + 1), text, fill=(0, 0, 0, 170), font=font)
+            self.draw.text((x, y), text, fill=fill, font=font)
+        else:
+            self.draw.text((x, y), text, fill=fill)
+
+    def _premultiply_rect(self, box):
+        x0, y0 = max(0, int(box[0])), max(0, int(box[1]))
+        x1, y1 = min(self.W, int(box[2])), min(self.H, int(box[3]))
+        w, h = x1 - x0, y1 - y0
+        if w <= 0 or h <= 0:
+            return
+        try:
+            sub = self.img.crop((x0, y0, x1, y1)).convert("RGBA")
+            r, g, b, a = sub.split()
+            pm = Image.merge("RGBA", (ImageChops.multiply(r, a),
+                                      ImageChops.multiply(g, a),
+                                      ImageChops.multiply(b, a), a))
+            self.img.paste(pm, (x0, y0))
+        except Exception:
+            pass
+
+    def _render(self):
+        self.draw.rectangle([0, 0, self.W, self.H], fill=(0, 0, 0, 0))
+        px, py = self.pivot
+        tipx, tipy = self._tip()
+        # 绳
+        self.draw.line([(px, py), (tipx, tipy)], fill=(225, 235, 255, 235), width=3)
+        # 顶端滑轮座
+        self.draw.ellipse([px - 14, py - 14, px + 14, py + 14], fill=(60, 70, 95, 235))
+        self.draw.ellipse([px - 7, py - 7, px + 7, py + 7], fill=(150, 170, 210, 255))
+        # 钩
+        self._draw_hook(tipx, tipy)
+        # 被钩住的鱼
+        if self.carry_fish is not None:
+            self._draw_carry_fish(self.carry_fish, tipx, tipy)
+        # 特效
+        for e in self.effects:
+            p = e["t"] / e["life"]
+            r = 8 + p * 40
+            self.draw.ellipse([e["x"] - r, e["y"] - r, e["x"] + r, e["y"] + r],
+                              outline=(255, 220, 90), width=3)
+            for k in range(6):
+                a = p * 6.28 + k
+                cx = e["x"] + math.cos(a) * r
+                cy = e["y"] + math.sin(a) * r
+                self.draw.ellipse([cx - 4, cy - 4, cx + 4, cy + 4], fill=(255, 215, 60))
+        # 浮动文字
+        for fl in self.floaters:
+            col = fl.get("color", (255, 90, 60))
+            font = self.big_font or self.font
+            text = fl["text"]
+            ty = fl["y"]
+            if font:
+                w = self.draw.textlength(text, font=font)
+                self.draw.text((fl["x"] - w / 2, ty), text, fill=col, font=font,
+                               stroke_width=3, stroke_fill=(0, 0, 0))
+            else:
+                self.draw.text((fl["x"] - 14, ty), text, fill=col)
+        self._draw_hud()
+        self._premultiply_rect(self.hud)
+        # 导出 BGRA
+        r, g, b, a = self.img.split()
+        bgra = Image.merge("RGBA", (b, g, r, a)).tobytes()
+        ctypes.memmove(self.bits, bgra, self.W * self.H * 4)
+        blend = BLENDFUNCTION(0, 0, 255, 1)
+        dst = POINT(self.L, self.T)
+        sz = SIZE(self.W, self.H)
+        src = POINT(0, 0)
+        user32.UpdateLayeredWindow(self.hwnd, self.hdc_screen, ctypes.byref(dst),
+                                   ctypes.byref(sz), self.hdc_mem, ctypes.byref(src),
+                                   0, ctypes.byref(blend), ULW_ALPHA)
+
+    def destroy(self):
+        # 收回过程中若仍挂着鱼，恢复其桌面窗口避免凭空消失
+        if self.carry_fish is not None:
+            try:
+                user32.ShowWindow(self.carry_fish.hwnd, SW_SHOW)
+            except Exception:
+                pass
+            self.carry_fish = None
+        try:
+            if self._hook:
+                user32.UnhookWindowsHookEx(self._hook)
+                self._hook = 0
+            if self._kb_hook:
+                user32.UnhookWindowsHookEx(self._kb_hook)
+                self._kb_hook = 0
+        except Exception:
+            pass
+        try:
+            if self.hbm:
+                gdi32.SelectObject(self.hdc_mem, self.old_hbm)
+                gdi32.DeleteObject(self.hbm)
+            gdi32.DeleteDC(self.hdc_mem)
+            user32.ReleaseDC(0, self.hdc_screen)
+        except Exception:
+            pass
+        try:
+            self.win.destroy()
+        except Exception:
+            pass
+
+
 class App:
     TICK_MS = 33
     SCALES = [("很小", 0.28), ("小", 0.45), ("中", 0.70), ("大", 1.00)]
@@ -1908,6 +2348,8 @@ class App:
         self.tray = None
         self.fishing = False
         self.fishing_overlay = None
+        self.goldminer = False
+        self.goldminer_overlay = None
         self.coins = 1000
         self.cannon_level = 1
         self.cannon_index = 0
@@ -2045,6 +2487,11 @@ class App:
             if not self.fishes:  # 鱼被抓光了，自动补几条继续玩（按买价扣费，静默）
                 self._spawn_fish(random.choice(self.species_list))
                 self._spawn_fish(random.choice(self.species_list))
+        if self.goldminer and self.goldminer_overlay is not None:
+            self.goldminer_overlay.tick(dt)
+            if not self.fishes:  # 鱼被钓光了，自动补几条继续玩
+                self._spawn_fish(random.choice(self.species_list))
+                self._spawn_fish(random.choice(self.species_list))
         else:
             # 非捕鱼模式：用轮询命中检测驱动信息卡，不依赖 Tk 的 <Enter>/<Leave>
             # （鱼窗口每帧 geometry 移动，Leave 事件时序不可靠，会立刻隐藏）
@@ -2082,6 +2529,8 @@ class App:
             )),
             TrayItem("捕鱼模式", lambda icon, item: self._invoke(self.toggle_fishing),
                      checked=lambda item: self.fishing),
+            TrayItem("钓鱼模式", lambda icon, item: self._invoke(self.toggle_goldminer),
+                     checked=lambda item: self.goldminer),
             TrayItem("鼠标穿透", lambda icon, item: self._invoke(self.toggle_mouse_penetration),
                      checked=lambda item: self.mouse_penetration),
             TrayItem("设置", lambda icon, item: self._invoke(self.open_settings)),
@@ -2409,9 +2858,29 @@ class App:
                 self.fishing_overlay.destroy()
                 self.fishing_overlay = None
         else:
+            if self.goldminer:  # 互斥：开炮台捕鱼前先关钓鱼模式
+                self.toggle_goldminer()
             self.fishing = True
             self.fishing_overlay = FishingOverlay(self)
             self.fish_info.hide(immediate=True)  # 进捕鱼模式时收起普通信息卡（含延迟中的）
+        try:
+            self.tray.update_menu()
+        except Exception:
+            pass
+
+    def toggle_goldminer(self):
+        """钓鱼模式开关；与捕鱼模式互斥（同时只开一个叠加层）。"""
+        if self.goldminer:
+            self.goldminer = False
+            if self.goldminer_overlay is not None:
+                self.goldminer_overlay.destroy()
+                self.goldminer_overlay = None
+        else:
+            if self.fishing:  # 互斥：开矿工前先关炮台捕鱼
+                self.toggle_fishing()
+            self.goldminer = True
+            self.goldminer_overlay = GoldMinerOverlay(self)
+            self.fish_info.hide(immediate=True)  # 进矿工模式时收起普通信息卡
         try:
             self.tray.update_menu()
         except Exception:
@@ -2806,13 +3275,20 @@ class ShopAPI:
                 "max_fish": self.app.max_fish}
 
     # ---------- 写操作 ----------
-    def buy(self, path, qty=1):
-        return self._run_on_main(lambda: self._buy(path, qty))
+    def buy(self, key, qty=1):
+        return self._run_on_main(lambda: self._buy(key, qty))
 
-    def _buy(self, path, qty=1):
+    def _buy(self, key, qty=1):
         app = self.app
-        sp = next((s for s in app.species_list if s[1] == path), None)
+        sp = self._resolve_species(key)
         if sp is None:
+            try:
+                with open(os.path.join(DATA_DIR, "fish_pet_error.log"), "a",
+                          encoding="utf-8") as fp:
+                    fp.write("[buy] 找不到该鱼 key=%r species=%d\n"
+                             % (key, len(app.species_list)))
+            except Exception:
+                pass
             return {"ok": False, "msg": "找不到该鱼", "bought": 0}
         try:
             qty = max(1, int(qty))
@@ -2828,6 +3304,37 @@ class ShopAPI:
             app.sounds.play("poke")
             return {"ok": True, "msg": "成功购买 %d 条" % bought, "bought": bought}
         return {"ok": False, "msg": "金币不足或鱼池已满", "bought": 0}
+
+    def _resolve_species(self, key):
+        """把前端传来的 key 解析成 species_list 里的一条 (label, path)。
+
+        前端优先传鱼种在 species 数组里的序号（与 species_list 同序），彻底避开
+        把带反斜杠/中文的整条路径透传过 pywebview 桥可能带来的匹配失败；同时兼容
+        直接传路径字符串的老调用（含分隔符被规范化的兜底）。
+        """
+        app = self.app
+        sl = app.species_list
+        # 数字：按序号定位（JS 数字过来可能是 int/float，极端情况下是数字字符串）
+        if isinstance(key, str) and key.strip().isdigit():
+            key = int(key.strip())
+        if isinstance(key, bool):
+            pass
+        elif isinstance(key, (int, float)):
+            i = int(key)
+            if 0 <= i < len(sl):
+                return sl[i]
+            return None
+        # 字符串：先精确路径匹配，再按分隔符归一 + basename 兜底
+        if isinstance(key, str) and key:
+            for s in sl:
+                if s[1] == key:
+                    return s
+            base = os.path.basename(key.replace("/", "\\").rstrip("\\"))
+            if base:
+                for s in sl:
+                    if os.path.basename(s[1]) == base:
+                        return s
+        return None
 
     def sell(self, fish_id):
         return self._run_on_main(lambda: self._sell(fish_id))
@@ -2917,6 +3424,7 @@ class SettingsAPI:
             "paused": app.paused,
             "show_fish": not app.hidden,
             "fishing": app.fishing,
+            "goldminer": app.goldminer,
             "sound_enabled": app.sound_enabled,
             "autostart": app.is_autostart_enabled(),
             "cross_screen": app.cross_screen,
@@ -2941,6 +3449,9 @@ class SettingsAPI:
 
     def toggle_fishing(self):
         return self._run_on_main(lambda: self._toggle("toggle_fishing"))
+
+    def toggle_goldminer(self):
+        return self._run_on_main(lambda: self._toggle("toggle_goldminer"))
 
     def toggle_sound(self):
         return self._run_on_main(lambda: self._toggle("toggle_sound"))
