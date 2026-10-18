@@ -1260,11 +1260,18 @@ class FishingOverlay:
         user32.GetCursorPos(ctypes.byref(pt))
         self._cur_x, self._cur_y = pt.x, pt.y
         self._mon_index = None
-        idx = self._monitor_index_at(pt.x, pt.y)
+        idx = self._initial_monitor_index()
         if idx is not None:
             self._set_monitor(idx)
 
     # ---------- 屏幕跟随 ----------
+    def _initial_monitor_index(self):
+        """开局停靠的屏幕：与「屏幕选择」联动——指定了某屏就停在该屏，
+        选「全部屏幕」才按当前鼠标位置切到对应显示器。"""
+        if not self.app.cross_screen:
+            return self.app.screen
+        return self._monitor_index_at(self._cur_x, self._cur_y)
+
     def _monitor_index_at(self, x, y):
         """返回包含坐标 (x,y) 的显示器索引；落在间隙/外部时回退主屏。"""
         mons = get_monitors()
@@ -1695,11 +1702,15 @@ class FishingOverlay:
         return self._FISH_VALUE.get(name, (5, 0.25))
 
     def tick(self, dt):
-        # 炮台跟随鼠标所在屏幕：鼠标跨屏则把叠加层整体迁移过去
-        cx, cy = getattr(self, "_cur_x", 0), getattr(self, "_cur_y", 0)
-        idx = self._monitor_index_at(cx, cy)
-        if idx is not None and idx != getattr(self, "_mon_index", None):
-            self._set_monitor(idx)
+        # 屏幕联动：指定了某屏就固定在选定屏（不跟随鼠标跨屏，鱼也在该屏）；
+        # 选「全部屏幕」才让炮台跟随鼠标所在屏幕迁移
+        if self.app.cross_screen:
+            cx, cy = getattr(self, "_cur_x", 0), getattr(self, "_cur_y", 0)
+            idx = self._monitor_index_at(cx, cy)
+            if idx is not None and idx != getattr(self, "_mon_index", None):
+                self._set_monitor(idx)
+        elif self._mon_index != self.app.screen:
+            self._set_monitor(self.app.screen)
 
         if self.pending_fires:
             # 发射冷却：按住空格时系统自动连发约 30 次/秒，直接全打出去会瞬间
@@ -2017,11 +2028,18 @@ class GoldMinerOverlay:
         pt = POINT()
         user32.GetCursorPos(ctypes.byref(pt))
         self._cur_x, self._cur_y = pt.x, pt.y
-        idx = self._monitor_index_at(pt.x, pt.y)
+        idx = self._initial_monitor_index()
         if idx is not None:
             self._set_monitor(idx)
 
     # ---------- 屏幕跟随（与捕鱼模式同理） ----------
+    def _initial_monitor_index(self):
+        """开局停靠的屏幕：与「屏幕选择」联动——指定了某屏就停在该屏，
+        选「全部屏幕」才按当前鼠标位置切到对应显示器。"""
+        if not self.app.cross_screen:
+            return self.app.screen
+        return self._monitor_index_at(self._cur_x, self._cur_y)
+
     def _monitor_index_at(self, x, y):
         mons = get_monitors()
         if not mons:
@@ -2146,10 +2164,15 @@ class GoldMinerOverlay:
         return self._FISH_VALUE.get(name, (5, 0.25))
 
     def tick(self, dt):
-        cx, cy = self._cur_x, self._cur_y
-        idx = self._monitor_index_at(cx, cy)
-        if idx is not None and idx != self._mon_index:
-            self._set_monitor(idx)
+        # 屏幕联动：指定了某屏就固定在选定屏（不跟随鼠标跨屏，鱼也在该屏）；
+        # 选「全部屏幕」才让钩绳跟随鼠标所在屏幕迁移
+        if self.app.cross_screen:
+            cx, cy = self._cur_x, self._cur_y
+            idx = self._monitor_index_at(cx, cy)
+            if idx is not None and idx != self._mon_index:
+                self._set_monitor(idx)
+        elif self._mon_index != self.app.screen:
+            self._set_monitor(self.app.screen)
 
         if self.state == "idle":
             self.angle += self.swing_dir * self.swing_speed * dt
