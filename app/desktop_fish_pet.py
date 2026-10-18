@@ -182,6 +182,7 @@ WM_MOUSEMOVE = 0x0200
 WM_LBUTTONDOWN = 0x0201
 WH_KEYBOARD_LL = 13
 WM_KEYDOWN = 0x0100
+WM_KEYUP = 0x0101
 VK_SPACE = 0x20
 user32.SetWindowsHookExW.argtypes = [ctypes.c_int, ctypes.c_void_p, wintypes.HANDLE, wintypes.DWORD]
 user32.SetWindowsHookExW.restype = wintypes.HANDLE
@@ -1939,9 +1940,9 @@ def _get_hook_tile():
 class GoldMinerOverlay:
     """黄金矿工模式：全屏透明叠加层 + 全局鼠标/键盘钩子。
 
-    顶端中央垂下一条会钟摆摆动的钩绳；空格放钩（沿当前角度伸出），钩到鱼则
-    收回（鱼越大收回越慢），回到顶端时按「鱼价值 × 等级」给金币并把鱼收走。
-    与捕鱼模式（炮台）互斥，作为独立的托盘开关存在。
+    顶端中央垂下一条会钟摆摆动的钩绳；空格放钩（沿当前角度伸出），飞行中再按
+    空格立即收回；钩到鱼则收回（鱼越大收回越慢），回到顶端时按「鱼价值 × 等
+    级」给金币并把鱼收走。与捕鱼模式（炮台）互斥，作为独立的托盘开关存在。
     """
 
     def __init__(self, app):
@@ -2008,6 +2009,7 @@ class GoldMinerOverlay:
 
         self._hook = None
         self._kb_hook = None
+        self._space_down = False  # 空格按下状态：用于过滤按住时的系统自动连发
         self._install_hook()
         self.win.bind("<Button-3>", self._menu)
         self._render()
@@ -2094,13 +2096,29 @@ class GoldMinerOverlay:
         return user32.CallNextHookEx(self._hook if self._hook else 0, nCode, wParam, lParam)
 
     def _keyboard_proc(self, nCode, wParam, lParam):
-        if nCode == 0 and wParam == WM_KEYDOWN:
+        if nCode == 0:
             ks = KBDLLHOOKSTRUCT.from_address(lParam)
-            if ks.vkCode == VK_SPACE and self.state == "idle":
-                self.state = "firing"
-                self.len = self.rest_len
-                self.app.sounds.play("poke")
+            if ks.vkCode == VK_SPACE:
+                # 按下/抬起配对：按住不放时系统会自动连发（~30 次/秒），
+                # 只在首次按下触发一次动作，否则「放钩」会被连发立刻打成「收回」
+                if wParam == WM_KEYDOWN:
+                    if not self._space_down:
+                        self._space_down = True
+                        self._space_action()
+                elif wParam == WM_KEYUP:
+                    self._space_down = False
         return user32.CallNextHookEx(self._kb_hook if self._kb_hook else 0, nCode, wParam, lParam)
+
+    def _space_action(self):
+        """空格动作：空闲→放钩；飞行中→立即收回（不必等伸到最长/出屏）。
+        收回中（含钩着鱼慢速回线）再按无效。"""
+        if self.state == "idle":
+            self.state = "firing"
+            self.len = self.rest_len
+            self.app.sounds.play("poke")
+        elif self.state == "firing":
+            self.state = "retract"
+            self.app.sounds.play("poke")
 
     # ---------- 右键菜单 ----------
     def _menu(self, e):
@@ -2284,7 +2302,7 @@ class GoldMinerOverlay:
                                     outline=(120, 150, 200, 220), width=2)
         self._hud_text(x0 + 16, y0 + 11, "金币：%d" % self.app.coins,
                        (255, 222, 120, 255), font)
-        self._hud_text(x0 + 16, y0 + 35, "空格放钩 · 钩到鱼收回",
+        self._hud_text(x0 + 16, y0 + 35, "空格放钩 · 再按收回",
                        (205, 235, 255, 255), font)
 
     def _hud_text(self, x, y, text, fill, font):
