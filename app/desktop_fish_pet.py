@@ -2009,6 +2009,7 @@ class GoldMinerOverlay:
         self._hook = None
         self._kb_hook = None
         self._install_hook()
+        self.win.bind("<Button-3>", self._menu)
         self._render()
 
         pt = POINT()
@@ -2100,6 +2101,13 @@ class GoldMinerOverlay:
                 self.len = self.rest_len
                 self.app.sounds.play("poke")
         return user32.CallNextHookEx(self._kb_hook if self._kb_hook else 0, nCode, wParam, lParam)
+
+    # ---------- 右键菜单 ----------
+    def _menu(self, e):
+        """钓鱼模式下右键弹出菜单：退出钓鱼。"""
+        menu = tk.Menu(self.app.root, tearoff=0)
+        menu.add_command(label="退出钓鱼", command=self.app.toggle_goldminer)
+        menu.tk_popup(e.x_root, e.y_root)
 
     # ---------- 逻辑 ----------
     def _tip(self):
