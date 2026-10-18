@@ -1884,6 +1884,57 @@ class FishingOverlay:
             pass
 
 
+# ---------------------------------------------------------------- 鱼钩贴图
+HOOK_TILE_W = HOOK_TILE_H = 96           # 瓦片尺寸（取大方格，留足旋转不裁切）
+HOOK_EYE = (48, 40)                      # 钩眼在瓦片中的位置（贴绳端时对准这里）
+_hook_tile_cache = None
+
+
+def _make_fishhook_tile():
+    """生成反向 J 形鱼钩贴图：算中心线，用渐变变细的粗线沿它描（6 倍超采样后缩小），
+    得到平滑、有粗细渐变、带钩眼/倒刺的真鱼钩。弯钩朝左、钩尖在左上。"""
+    W, H = HOOK_TILE_W, HOOK_TILE_H
+    S = 6
+    w, h = W * S, H * S
+    im = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+    d = ImageDraw.Draw(im)
+    steel = (228, 238, 250, 255)
+    edge = (84, 100, 132, 255)
+    ex, ey = HOOK_EYE[0] * S, HOOK_EYE[1] * S
+    shank, r = 18 * S, 11 * S
+    # 中心线：钩眼 -> 钩柄(竖直向下) -> 半圆弯钩(向下沉再向左) -> 钩尖(向上内收)
+    pts = [(ex, ey), (ex, ey + shank)]
+    for a in range(0, 181, 4):
+        rad = math.radians(a)
+        pts.append((ex - r + r * math.cos(rad), ey + shank + r * math.sin(rad)))
+    tipx, tipy = ex - 2 * r, ey + shank
+    pts.append((tipx + 3 * S, tipy - 13 * S))
+    widths = [7 * S, 6 * S, 5 * S, 4 * S, 3 * S]   # 由粗到细，做出渐变收尖
+    n = len(pts) - 1
+    for i in range(n):                              # 深色外轮廓（粗）
+        wi = widths[min(i, len(widths) - 1)]
+        d.line([pts[i], pts[i + 1]], fill=edge, width=int(wi) + 2 * S, joint="curve")
+    for i in range(n):                              # 亮色金属主体（细）
+        wi = widths[min(i, len(widths) - 1)]
+        d.line([pts[i], pts[i + 1]], fill=steel, width=int(wi), joint="curve")
+    bx, by = pts[-1]                               # 倒刺（向钩口内侧后方）
+    d.line([(bx, by), (bx + 6 * S, by + 4 * S)], fill=edge, width=3 * S)
+    d.ellipse([ex - 4 * S, ey - 6 * S, ex + 4 * S, ey + 2 * S], outline=edge, width=3 * S)  # 钩眼
+    d.ellipse([ex - 4 * S, ey - 6 * S, ex + 4 * S, ey + 2 * S], outline=steel, width=1 * S)
+    return im.resize((W, H), Image.LANCZOS)
+
+
+def _get_hook_tile():
+    """生成并缓存鱼钩贴图（进程内一次）；失败返回 None 走矢量回退。"""
+    global _hook_tile_cache
+    if _hook_tile_cache is None:
+        try:
+            _hook_tile_cache = _make_fishhook_tile()
+        except Exception:
+            _hook_tile_cache = False
+    return _hook_tile_cache or None
+
+
 # ---------------------------------------------------------------- 应用
 class GoldMinerOverlay:
     """黄金矿工模式：全屏透明叠加层 + 全局鼠标/键盘钩子。
@@ -2133,10 +2184,17 @@ class GoldMinerOverlay:
 
     # ---------- 绘制 ----------
     def _draw_hook(self, x, y):
-        d = self.draw
-        d.ellipse([x - 7, y - 7, x + 7, y + 7], fill=(205, 215, 235, 255))
-        d.line([(x - 7, y + 1), (x - 11, y + 13)], fill=(205, 215, 235, 255), width=3)
-        d.line([(x + 7, y + 1), (x + 11, y + 13)], fill=(205, 215, 235, 255), width=3)
+        """贴鱼钩图：钩眼对准绳端 (x, y)，并按当前绳角旋转（钩身顺绳悬挂）。"""
+        tile = _get_hook_tile()
+        if tile is not None:
+            try:
+                rot = tile.rotate(math.degrees(self.angle), center=HOOK_EYE,
+                                  resample=Image.BICUBIC)
+                self.img.paste(rot, (int(x - HOOK_EYE[0]), int(y - HOOK_EYE[1])), rot)
+                return
+            except Exception:
+                pass
+        self.draw.ellipse([x - 5, y - 5, x + 5, y + 5], fill=(210, 220, 240, 255))
 
     def _draw_carry_fish(self, f, x, y):
         # 用鱼当前的朝向（桌面鱼可能朝左游，用 f.left），避免拉上来后镜像变样
@@ -2252,7 +2310,7 @@ class GoldMinerOverlay:
         # 顶端滑轮座
         self.draw.ellipse([px - 14, py - 14, px + 14, py + 14], fill=(60, 70, 95, 235))
         self.draw.ellipse([px - 7, py - 7, px + 7, py + 7], fill=(150, 170, 210, 255))
-        # 钩
+        # 钩（最初的矢量画法，直接画在画布上）
         self._draw_hook(tipx, tipy)
         # 被钩住的鱼
         if self.carry_fish is not None:
@@ -2802,7 +2860,7 @@ class App:
             return
         mons = get_monitors()
         if idx == -1:
-            self.screen = -1
+            self.screen = -1  
             self.cross_screen = True
         elif 0 <= idx < len(mons):
             self.screen = idx
