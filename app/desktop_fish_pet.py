@@ -2104,9 +2104,9 @@ class GoldMinerOverlay:
 
     # ---------- 右键菜单 ----------
     def _menu(self, e):
-        """钓鱼模式下右键弹出菜单：退出钓鱼。"""
+        """钓鱼模式下右键弹出菜单：退出钓鱼模式。"""
         menu = tk.Menu(self.app.root, tearoff=0)
-        menu.add_command(label="退出钓鱼", command=self.app.toggle_goldminer)
+        menu.add_command(label="退出钓鱼模式", command=self.app.toggle_goldminer)
         menu.tk_popup(e.x_root, e.y_root)
 
     # ---------- 逻辑 ----------
