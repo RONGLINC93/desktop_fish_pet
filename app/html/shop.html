@@ -593,6 +593,37 @@
     .mbtn.cancel { background: rgba(255, 255, 255, .12); color: #dfe7f5; }
     .mbtn.ok { background: linear-gradient(180deg, #ffd76a, #f0a92e); color: #1a2238; }
     .mbtn.ok:disabled { filter: grayscale(.6) brightness(.8); cursor: not-allowed; }
+
+    /* ---------- 出售页：批量选择 ---------- */
+    .slot.sell { cursor: pointer; }
+    .slot .pick {
+      position: absolute; top: 6px; left: 6px; width: 18px; height: 18px;
+      border-radius: 50%; border: 1px solid rgba(245, 197, 66, .5);
+      background: rgba(0, 0, 0, .35); display: flex; align-items: center;
+      justify-content: center; font-size: 12px; font-weight: 900; line-height: 1;
+      color: transparent;
+    }
+    .slot.sel { border-color: var(--gold);
+      box-shadow: 0 0 12px rgba(245, 197, 66, .35), inset 0 0 0 1px rgba(0, 0, 0, .45); }
+    .slot.sel .pick { background: linear-gradient(180deg, #f7d06a, #d9a02c);
+      color: #4a3508; border-color: var(--gold); }
+    .slot.sel .pick::before { content: "✓"; }
+
+    /* 批量出售操作条 */
+    .sellbar { display: flex; align-items: center; justify-content: space-between;
+      gap: 10px; margin-bottom: 10px; padding: 8px 12px;
+      border: 1px solid rgba(67, 201, 138, .35); border-radius: 8px;
+      background: linear-gradient(180deg, rgba(20, 48, 40, .35), rgba(8, 16, 12, .3)); }
+    .sellbar .sb-info { font-size: 13px; color: var(--ink); }
+    .sellbar .sb-info b { color: var(--gold); font-weight: 800; }
+    .sellbar .sb-btns { display: flex; gap: 8px; flex: 0 0 auto; }
+    .sbtn { padding: 5px 14px; border-radius: 6px; font-size: 13px; font-weight: 700;
+      cursor: pointer; user-select: none; color: var(--ink);
+      border: 1px solid rgba(245, 197, 66, .4); background: rgba(12, 20, 48, .7); }
+    .sbtn:hover { border-color: var(--gold); }
+    .sbtn.go { color: #fff; border-color: rgba(67, 201, 138, .6);
+      background: linear-gradient(180deg, #43c98a, #1e8a58); }
+    .sbtn.go.disabled { filter: grayscale(.8) brightness(.7); cursor: not-allowed; }
   </style>
 </head>
 
@@ -624,6 +655,14 @@
           <div class="subtabs">
             <div class="subtab active" data-mode="buy" onclick="switchFishMode('buy')">购 买</div>
             <div class="subtab" data-mode="sell" onclick="switchFishMode('sell')">出 售</div>
+          </div>
+          <div class="sellbar" id="sellBar" style="display:none;">
+            <span class="sb-info">已选 <b id="selCount">0</b> 条 · 预计获得 <b id="selGold">0</b> 金币</span>
+            <span class="sb-btns">
+              <span class="sbtn" onclick="selectAllFish()">全选</span>
+              <span class="sbtn" onclick="clearPick()">清空</span>
+              <span class="sbtn go" id="sellSelBtn" onclick="doSellMany()">出售选中</span>
+            </span>
           </div>
           <div class="grid" id="fishGrid"></div>
         </div>
@@ -669,6 +708,13 @@
     let DATA = null;
     let CUR_CAT = 'fish';      // fish | cannon
     let FISH_MODE = 'buy';     // buy  | sell
+    let PICKED = new Set();    // 出售页已选中的鱼 id（批量出售用）
+    let FISH_SIG = '';         // 鱼池列表签名（id:等级），仅在变化时才重绘出售页
+
+    /* 鱼池列表签名：用于判断轮询回来的列表是否真的变了 */
+    function fishSig(list) {
+      return (list || []).map(f => f.id + ':' + f.level).join(',');
+    }
 
     function toast(msg) {
       const t = document.getElementById('toast');
@@ -697,8 +743,11 @@
 
     function switchFishMode(mode) {
       FISH_MODE = mode;
+      PICKED.clear();
       document.querySelectorAll('.subtab').forEach(b =>
         b.classList.toggle('active', b.dataset.mode === mode));
+      document.getElementById('sellBar').style.display =
+        mode === 'sell' ? 'flex' : 'none';
       if (DATA) renderFish();
     }
 
@@ -745,9 +794,40 @@
       doBuy(k, q);
     }
 
+    /* ---------- 批量出售 ---------- */
+    function togglePick(id) {
+      if (PICKED.has(id)) PICKED.delete(id); else PICKED.add(id);
+      updatePickUI();
+    }
+    function selectAllFish() {
+      PICKED = new Set((DATA.fishes || []).map(f => f.id));
+      updatePickUI();
+    }
+    function clearPick() { PICKED.clear(); updatePickUI(); }
+    function updatePickUI() {
+      document.querySelectorAll('#fishGrid .slot[data-fid]').forEach(el =>
+        el.classList.toggle('sel', PICKED.has(Number(el.dataset.fid))));
+      let n = 0, gold = 0;
+      (DATA.fishes || []).forEach(f => {
+        if (PICKED.has(f.id)) { n++; gold += f.price; }
+      });
+      document.getElementById('selCount').textContent = n;
+      document.getElementById('selGold').textContent = gold;
+      document.getElementById('sellSelBtn').classList.toggle('disabled', n === 0);
+    }
+    async function doSellMany() {
+      if (!PICKED.size) return;
+      const ids = Array.from(PICKED);
+      const r = await window.pywebview.api.sell_many(ids);
+      toast(r.msg);
+      PICKED.clear();
+      if (r.ok) refreshShop(true); else updatePickUI();
+    }
+
     async function refreshShop(silent) {
       try {
         DATA = await window.pywebview.api.get_data();
+        FISH_SIG = fishSig(DATA.fishes);
         document.getElementById('coins').textContent = '金币：' + DATA.coins;
         document.getElementById('pool').textContent =
           DATA.fish_count + '/' + DATA.max_fish;
@@ -790,19 +870,32 @@
               ', \'' + jsStr(s.label) + '\', ' + s.price + ')">购 买</div>';
           html += slot(thumb, s.label, '', s.price, btn, false);
         });
+        grid.innerHTML = html;
       } else {
         if (!DATA.fishes.length) {
           grid.innerHTML = '<div class="empty">鱼池里还没有鱼</div>'; return;
         }
         DATA.fishes.forEach(f => {
-          const thumb = f.gif
-            ? '<img src="' + f.gif + '" alt="' + esc(f.label) + '">'
+          // GIF 不随每条鱼传输，按品种序号复用 species 数组里同一张
+          const gif = (f.sp >= 0 && DATA.species[f.sp]) ? DATA.species[f.sp].gif : '';
+          const thumb = gif
+            ? '<img src="' + gif + '" alt="' + esc(f.label) + '">'
             : '<span class="emo">🐟</span>';
-          html += slot(thumb, f.label, 'Lv' + f.level, '+' + f.price,
-            '<div class="btn green" onclick="doSell(' + f.id + ')">出 售</div>', true);
+          const sel = PICKED.has(f.id) ? ' sel' : '';
+          html += '<div class="slot sell' + sel + '" data-fid="' + f.id +
+            '" onclick="togglePick(' + f.id + ')"' +
+            ' title="点击选中，可多选后批量出售">' +
+            '<span class="pick"></span>' +
+            '<div class="thumb">' + thumb + '</div>' +
+            '<div class="nm">' + esc(f.label) + '</div>' +
+            '<div class="lv">Lv' + f.level + '</div>' +
+            '<div class="pr"><span class="coin"></span>+' + f.price + '</div>' +
+            '<div class="btn green" onclick="event.stopPropagation();doSell(' + f.id + ')">出 售</div>' +
+            '</div>';
         });
+        grid.innerHTML = html;
+        updatePickUI();
       }
-      grid.innerHTML = html;
     }
 
     function renderCannon() {
@@ -870,15 +963,28 @@
 
     window.addEventListener('pywebviewready', () => refreshShop(true));
 
-    /* 轻量定时同步：游戏内金币/鱼池数量变化时，顶栏数字每秒实时跟随，
-       只读标量、不重建列表，避免打断正在浏览的商品/炮台。 */
+    /* 轻量定时同步：游戏内金币/鱼池数量变化时，顶栏数字每秒实时跟随；
+       鱼池列表也每秒轻量同步（无 GIF），繁殖/捕获/出售后出售页即时跟上，
+       仅在列表真变化时才重绘，避免打断浏览、跳动滚动条。 */
     setInterval(async () => {
       try {
         const s = await window.pywebview.api.get_status();
-        if (!s) return;
-        document.getElementById('coins').textContent = '金币：' + s.coins;
-        document.getElementById('pool').textContent =
-          s.fish_count + '/' + s.max_fish;
+        if (s) {
+          document.getElementById('coins').textContent = '金币：' + s.coins;
+          document.getElementById('pool').textContent =
+            s.fish_count + '/' + s.max_fish;
+        }
+        const fs = await window.pywebview.api.get_fishes();
+        if (fs && DATA && fishSig(fs) !== FISH_SIG) {
+          FISH_SIG = fishSig(fs);
+          DATA.fishes = fs;
+          if (FISH_MODE === 'sell') {
+            const g = document.getElementById('fishGrid');
+            const st = g.scrollTop;   // 保持滚动位置
+            renderFish();
+            g.scrollTop = st;
+          }
+        }
       } catch (e) { /* api 未就绪时静默跳过 */ }
     }, 1000);
   </script>

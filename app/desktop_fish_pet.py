@@ -3293,12 +3293,10 @@ class ShopAPI:
             species.append({"label": label, "path": path,
                             "price": app.fish_buy_price(name),
                             "gif": fish_gif(path)})
-        fishes = []
-        for f in list(app.fishes):
-            sp = f.species
-            fishes.append({"id": id(f), "label": sp[0],
-                           "level": f.level, "price": app.fish_sell_price(f),
-                           "gif": fish_gif(sp[1])})
+        # 出售列表只带品种序号（sp），GIF 由前端复用 species 数组里同一张。
+        # 每条鱼都内嵌一份 GIF 会把 payload 撑爆：满鱼池（100 条）时 ~4.5MB，
+        # pywebview 桥直接丢消息/不返回，商城整页空白（顶栏小请求轮询仍正常）。
+        fishes = self._fishes_only()
         cannons = []
         cannon_paths = find_cannons()
         for i, cp in enumerate(cannon_paths):
@@ -3340,6 +3338,25 @@ class ShopAPI:
         return {"coins": self.app.coins,
                 "fish_count": len(self.app.fishes),
                 "max_fish": self.app.max_fish}
+
+    # ---------- 轻量鱼列表（供前端定时轮询，无 GIF、不重编码图片） ----------
+    def get_fishes(self):
+        """只返回鱼池列表（id/品种序号/名字/等级/售价），供出售页实时同步。
+
+        完整 get_data 要合成 GIF/编码 PNG，开销大；这里只读标量，游戏内
+        繁殖/捕获/出售导致鱼池变化时，商城出售页每秒就能跟上。
+        """
+        return self._run_on_main(self._fishes_only)
+
+    def _fishes_only(self):
+        """鱼池列表的公共构造：sp 为品种在 species_list 里的序号（前端据此
+        复用 species 数组的 GIF），不内嵌任何图片。"""
+        app = self.app
+        sp_index = {path: i for i, (_lb, path) in enumerate(app.species_list)}
+        return [{"id": id(f), "sp": sp_index.get(f.species[1], -1),
+                 "label": f.species[0], "level": f.level,
+                 "price": app.fish_sell_price(f)}
+                for f in list(app.fishes)]
 
     # ---------- 写操作 ----------
     def buy(self, key, qty=1):
@@ -3414,6 +3431,38 @@ class ShopAPI:
         app.sell_fish(fish)
         app.sounds.play("catch")
         return {"ok": True, "msg": "出售成功"}
+
+    def sell_many(self, fish_ids):
+        return self._run_on_main(lambda: self._sell_many(fish_ids))
+
+    def _sell_many(self, fish_ids):
+        """批量出售：传入鱼 id 列表，逐条出售并汇总返还金币。
+
+        单条 sell 的批量版：id 解析失败的（已卖掉/已不在鱼池）跳过并在
+        消息里注明，不影响其余鱼的成交。
+        """
+        app = self.app
+        ids = list(fish_ids) if isinstance(fish_ids, (list, tuple)) \
+            else [fish_ids]
+        sold, gain, gone = 0, 0, 0
+        for raw in ids:
+            try:
+                fid = int(raw)
+            except (TypeError, ValueError):
+                continue
+            fish = next((f for f in app.fishes if id(f) == fid), None)
+            if fish is None:
+                gone += 1
+                continue
+            gain += app.sell_fish(fish)
+            sold += 1
+        if sold:
+            app.sounds.play("catch")
+            msg = "成功出售 %d 条，获得 %d 金币" % (sold, gain)
+            if gone:
+                msg += "（%d 条已不在鱼池）" % gone
+            return {"ok": True, "msg": msg, "sold": sold, "gain": gain}
+        return {"ok": False, "msg": "没有可出售的鱼", "sold": 0, "gain": 0}
 
     def upgrade(self):
         return self._run_on_main(self._upgrade)
