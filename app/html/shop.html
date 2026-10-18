@@ -552,6 +552,47 @@
     ::-webkit-scrollbar-thumb:hover {
       background: rgba(245, 197, 66, .55);
     }
+
+    .qbtn {
+      border: none; cursor: pointer; color: #1a2238; font-weight: 700;
+      background: linear-gradient(180deg, #ffd76a, #f0a92e);
+      border-radius: 8px; transition: transform .06s;
+    }
+    .qbtn { width: 30px; height: 30px; font-size: 18px; line-height: 1; }
+    .qbtn:active { transform: scale(.92); }
+    .qty-in {
+      width: 56px; height: 30px; text-align: center; font-size: 15px; font-weight: 700;
+      color: #fff; background: rgba(0, 0, 0, .25);
+      border: 1px solid rgba(255, 255, 255, .18); border-radius: 8px; outline: none;
+    }
+
+    /* 购买数量弹窗 */
+    .modal-mask {
+      position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
+      background: rgba(8, 12, 24, .55); z-index: 50;
+    }
+    .modal {
+      width: 300px; padding: 18px 20px 20px; border-radius: 16px;
+      background: linear-gradient(180deg, #20283f, #161c2c);
+      border: 1px solid rgba(245, 197, 66, .35);
+      box-shadow: 0 18px 50px rgba(0, 0, 0, .5);
+    }
+    .modal-tit { font-size: 16px; font-weight: 700; color: #ffd76a; text-align: center; margin-bottom: 12px; }
+    .modal-fish { text-align: center; font-size: 15px; color: #eaf2ff; margin-bottom: 10px; }
+    .modal-row { display: flex; align-items: center; justify-content: space-between;
+      margin: 8px 2px; color: #cfe6ff; font-size: 14px; }
+    .modal-row.total { border-top: 1px solid rgba(255, 255, 255, .12); padding-top: 10px;
+      margin-top: 10px; font-weight: 700; }
+    .modal-val { display: inline-flex; align-items: center; gap: 4px; color: #fff; }
+    .modal-stepper { display: flex; align-items: center; gap: 8px; justify-content: center;
+      margin: 6px 0 4px; flex-wrap: wrap; }
+    .modal-btns { display: flex; gap: 10px; margin-top: 16px; }
+    .mbtn { flex: 1; height: 38px; border: none; border-radius: 10px; cursor: pointer;
+      font-weight: 700; font-size: 14px; transition: transform .06s; }
+    .mbtn:active { transform: scale(.96); }
+    .mbtn.cancel { background: rgba(255, 255, 255, .12); color: #dfe7f5; }
+    .mbtn.ok { background: linear-gradient(180deg, #ffd76a, #f0a92e); color: #1a2238; }
+    .mbtn.ok:disabled { filter: grayscale(.6) brightness(.8); cursor: not-allowed; }
   </style>
 </head>
 
@@ -597,6 +638,33 @@
   </div>
   <div class="toast" id="toast"></div>
 
+  <!-- 购买数量弹窗 -->
+  <div class="modal-mask" id="buyModal" style="display:none;"
+       onclick="if(event.target===this)closeBuyModal()">
+    <div class="modal">
+      <div class="modal-tit">购买数量</div>
+      <div class="modal-fish" id="bmFish"></div>
+      <div class="modal-row">
+        <span class="modal-lab">单价</span>
+        <span class="modal-val"><span class="coin"></span><span id="bmPrice"></span></span>
+      </div>
+      <div class="modal-stepper">
+        <button class="qbtn" type="button" onclick="modalChgQty(-1)">−</button>
+        <input class="qty-in" id="bmQty" type="number" min="1" max="999" value="1"
+               onchange="modalSetQty(this.value)">
+        <button class="qbtn" type="button" onclick="modalChgQty(1)">＋</button>
+      </div>
+      <div class="modal-row total">
+        <span class="modal-lab">合计</span>
+        <span class="modal-val"><span class="coin"></span><span id="bmTotal"></span></span>
+      </div>
+      <div class="modal-btns">
+        <button class="mbtn cancel" type="button" onclick="closeBuyModal()">取消</button>
+        <button class="mbtn ok" type="button" id="bmOk" onclick="confirmBuy()">确认购买</button>
+      </div>
+    </div>
+  </div>
+
   <script>
     let DATA = null;
     let CUR_CAT = 'fish';      // fish | cannon
@@ -632,6 +700,48 @@
       document.querySelectorAll('.subtab').forEach(b =>
         b.classList.toggle('active', b.dataset.mode === mode));
       if (DATA) renderFish();
+    }
+
+    /* 购买数量弹窗 */
+    let modalPath = null;      // 当前要购买的鱼种路径
+    let MODAL_PRICE = 0;       // 单价
+    let MODAL_QTY = 1;         // 选择的数量
+
+    function openBuyModal(path, label, price) {
+      modalPath = path;
+      MODAL_PRICE = Number(price) || 0;
+      MODAL_QTY = 1;
+      document.getElementById('bmFish').textContent = label;
+      document.getElementById('bmPrice').textContent = MODAL_PRICE;
+      document.getElementById('bmQty').value = 1;
+      updateBuyModal();
+      document.getElementById('buyModal').style.display = 'flex';
+    }
+    function modalChgQty(d) { modalSetQty(MODAL_QTY + d); }
+    function modalSetQty(v) {
+      v = parseInt(v, 10);
+      if (isNaN(v) || v < 1) v = 1;
+      if (v > 999) v = 999;
+      MODAL_QTY = v;
+      document.getElementById('bmQty').value = v;
+      updateBuyModal();
+    }
+    function updateBuyModal() {
+      const total = MODAL_PRICE * MODAL_QTY;
+      document.getElementById('bmTotal').textContent = total;
+      const ok = document.getElementById('bmOk');
+      // 金币不足或鱼池放不下时禁用确认
+      ok.disabled = (DATA.coins < total) || (DATA.fish_count + MODAL_QTY > DATA.max_fish);
+    }
+    function closeBuyModal() {
+      document.getElementById('buyModal').style.display = 'none';
+      modalPath = null;
+    }
+    function confirmBuy() {
+      if (!modalPath) return;
+      const q = MODAL_QTY;
+      closeBuyModal();
+      doBuy(modalPath, q);
     }
 
     async function refreshShop(silent) {
@@ -675,7 +785,8 @@
             : '<span class="emo">🐟</span>';
           const btn = full
             ? '<div class="btn gold disabled">鱼池已满</div>'
-            : '<div class="btn gold" onclick="doBuy(\'' + jsStr(s.path) + '\')">购 买</div>';
+            : '<div class="btn gold" onclick="openBuyModal(\'' + jsStr(s.path) +
+              '\', \'' + jsStr(s.label) + '\', ' + s.price + ')">购 买</div>';
           html += slot(thumb, s.label, '', s.price, btn, false);
         });
       } else {
@@ -735,8 +846,8 @@
       }
     }
 
-    async function doBuy(path) {
-      const r = await window.pywebview.api.buy(path);
+    async function doBuy(path, qty) {
+      const r = await window.pywebview.api.buy(path, qty || 1);
       toast(r.msg); if (r.ok) refreshShop(true);
     }
     async function doSell(id) {
@@ -757,6 +868,18 @@
     }
 
     window.addEventListener('pywebviewready', () => refreshShop(true));
+
+    /* 轻量定时同步：游戏内金币/鱼池数量变化时，顶栏数字每秒实时跟随，
+       只读标量、不重建列表，避免打断正在浏览的商品/炮台。 */
+    setInterval(async () => {
+      try {
+        const s = await window.pywebview.api.get_status();
+        if (!s) return;
+        document.getElementById('coins').textContent = '金币：' + s.coins;
+        document.getElementById('pool').textContent =
+          s.fish_count + '/' + s.max_fish;
+      } catch (e) { /* api 未就绪时静默跳过 */ }
+    }, 1000);
   </script>
 </body>
 

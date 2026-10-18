@@ -104,7 +104,8 @@ FISH_BUY_MULT = 2         # 买鱼价格 = 鱼价值 × 此倍数（下限见 fi
 FISH_SELL_RATE = 1.8      # 卖鱼返还 = 鱼价值 × 等级 × 此比例（养大才能赚钱）
 CANNON_UPGRADE_BASE = 200  # 炮台升到下一级花费 = 此基数 × 当前等级
 CANNON_SELL_RATE = 0.6     # 炮台降级返还 = 上一级升级花费 × 此比例
-CANNON_MAX_LEVEL = 7       # 炮台等级上限（与 load_config 的 min(7, …) 一致）
+CANNON_MAX_LEVEL = 99      # 炮台等级上限（与 load_config 的 min(CANNON_MAX_LEVEL, …) 一致）
+CANNON_VISUAL_CAP = 10      # 炮台贴图视觉缩放封顶等级：高于此等级不再变大，避免炮台铺满屏幕
 
 # 鱼的基础价值（捕获奖励基数）与捕获率；商城买卖价格也基于此计算
 FISH_VALUE = {
@@ -1200,8 +1201,6 @@ class FishingOverlay:
         self._hover_linger_fish = None  # 瞄具离开鱼后，继续跟随显示的鱼
         self._hover_linger_at = None    # 该跟随的到期时间（monotonic）；None=未挂
         self.gun_len = 52
-        self.gun_x, self.gun_y = self.W // 2, self.H - 40
-        self.cannon_anchor_y = self.H - 12          # 炮台底部贴着屏幕下缘
         self.cannon_tilt_max = 32.0                 # 炮台最大倾斜角（度）
         self.cannons = find_cannons()
         self.cannon_index = getattr(app, "cannon_index", 0)
@@ -1210,12 +1209,11 @@ class FishingOverlay:
         self.cannon_base_w = 150      # Lv1 时的炮台宽度
         self.cannon_barrel_len = 0
         self._cannon_level_cache = {}  # 等级 -> 缩放后的贴图
-        self.muzzle = (self.gun_x, self.gun_y - 60)  # 炮口（子弹出生点）
         self._cannon_cache = {}                      # (索引, 等级, 角度) -> 旋转后的贴图
         self.cannon_rect = None                       # 炮台外接矩形（在 _draw_cannon 中更新）
         self._load_cannon()
         self.bullet_speed = 1500.0
-        self.hud = (12, self.H - 78, 250, 70)  # 信息面板（实际位置在 _draw_hud 里按炮台重算）
+        self._recompute_layout()   # 炮台/枪口/HUD 锚点依赖屏幕宽高，切换屏幕时重算
         try:
             self.font = load_cjk_font(14)
         except Exception:
@@ -1256,6 +1254,62 @@ class FishingOverlay:
         self._install_hook()
         self.win.bind("<Button-3>", self._cannon_menu)
         self._render()
+        # 炮台跟随鼠标所在屏幕：进入捕鱼模式时先按当前鼠标位置切到对应显示器
+        pt = POINT()
+        user32.GetCursorPos(ctypes.byref(pt))
+        self._cur_x, self._cur_y = pt.x, pt.y
+        self._mon_index = None
+        idx = self._monitor_index_at(pt.x, pt.y)
+        if idx is not None:
+            self._set_monitor(idx)
+
+    # ---------- 屏幕跟随 ----------
+    def _monitor_index_at(self, x, y):
+        """返回包含坐标 (x,y) 的显示器索引；落在间隙/外部时回退主屏。"""
+        mons = get_monitors()
+        if not mons:
+            return None
+        for m in mons:
+            rl, rt, rr, rb = m["rect"]
+            if rl <= x <= rr and rt <= y <= rb:
+                return m["index"]
+        return mons[0]["index"]
+
+    def _set_monitor(self, index):
+        """把捕鱼叠加层整体切到指定显示器：炮台/枪口/鱼检测都随之迁移到该屏。"""
+        mons = get_monitors()
+        mon = None
+        for m in mons:
+            if m["index"] == index:
+                mon = m
+                break
+        if mon is None and mons:
+            mon = mons[0]
+        if mon is None:
+            return
+        ml, mt, mr, mb = mon["work"]  # 用工作区：炮台贴着下缘、不压任务栏
+        self.L, self.T, self.W, self.H = ml, mt, mr - ml, mb - mt
+        self.win.geometry("%dx%d+%d+%d" % (self.W, self.H, ml, mt))
+        self.win.update_idletasks()
+        self._make_dib(self.W, self.H)
+        self.img = Image.new("RGBA", (self.W, self.H), (0, 0, 0, 0))
+        self.draw = ImageDraw.Draw(self.img)
+        self._recompute_layout()
+        # 切屏时清空在途子弹/特效/浮动文字，避免上一屏的局部坐标残留错位
+        self.bullets = []
+        self.effects = []
+        self.floaters = []
+        # 炮台旋转缓存的粘贴位置依赖屏幕宽高，必须清掉否则画在旧屏位置
+        self._cannon_cache = {}
+        self._mon_index = index
+
+    def _recompute_layout(self):
+        """依据当前屏幕宽高重算炮台/枪口/HUD 锚点（屏幕切换时调用）。"""
+        self.gun_x, self.gun_y = self.W // 2, self.H - 40
+        self.cannon_anchor_y = self.H - 12          # 炮台底部贴着屏幕下缘
+        self.muzzle = (self.gun_x, self.gun_y - 60)  # 炮口（绘制时还会按倾角更新）
+        self.hud = (12, self.H - 78, 250, 70)  # 信息面板（实际位置在 _draw_hud 里按炮台重算）
+        self.upgrade_btn = None                     # 炮台旁升级按钮矩形（每帧重算）
 
     # ---------- Win32 图层 ----------
     def _make_dib(self, w, h):
@@ -1292,13 +1346,18 @@ class FishingOverlay:
             return
         self.cannon_src = im
 
+    def _cannon_scale_mult(self, lv):
+        """炮台视觉缩放系数：等级越高炮台越大，但封顶（CANNON_VISUAL_CAP）以免
+        高等级时贴图大得离谱。等级数字/威力/费用仍按真实 lv 计算。"""
+        return 1.0 + (min(lv, CANNON_VISUAL_CAP) - 1) * 0.06
+
     def _cannon_level_img(self, lv):
-        """按炮台等级返回缩放后的贴图（等级越高炮台越大），带缓存。"""
+        """按炮台等级返回缩放后的贴图（等级越高炮台越大，到封顶后不再变大），带缓存。"""
         if self.cannon_src is None:
             return None
         img = self._cannon_level_cache.get(lv)
         if img is None:
-            mult = 1.0 + (lv - 1) * 0.06  # Lv1=1.0 … Lv7≈1.36
+            mult = self._cannon_scale_mult(lv)  # Lv1=1.0 … Lv10≈1.54，之后封顶
             tw = max(1, int(round(self.cannon_base_w * mult)))
             th = max(1, int(round(self.cannon_src.height * tw / self.cannon_src.width)))
             img = self.cannon_src.resize((tw, th), Image.LANCZOS)
@@ -1439,7 +1498,7 @@ class FishingOverlay:
         for f in self.app.fishes:
             self._ensure_hp(f)
             if f.hp < f.max_hp and (now - f.last_hit) <= HP_BAR_HIDE_AFTER:
-                bx, by, bw, bh = f.x, f.y - 9, f.w, 5
+                bx, by, bw, bh = f.x - self.L, f.y - self.T - 9, f.w, 5
                 ratio = max(0.0, f.hp / f.max_hp)
                 self.draw.rectangle([bx, by, bx + bw, by + bh], fill=(30, 30, 30, 210))
                 col = (int(255 * (1 - ratio)), int(220 * ratio) + 35, 50)
@@ -1538,7 +1597,7 @@ class FishingOverlay:
         w, h = self.hud[2], self.hud[3]
         # 摆在炮台左侧，底部与炮台底座对齐（炮台随等级变宽，故每帧重算）
         img = self._cannon_level_img(lv)
-        cw = img.width if img is not None else int(self.cannon_base_w * (1.0 + (lv - 1) * 0.06))
+        cw = img.width if img is not None else int(self.cannon_base_w * self._cannon_scale_mult(lv))
         x0 = self.gun_x - cw / 2.0 - 16 - w
         y0 = self.H - 12 - h
         x0 = max(12, min(x0, self.W - w - 12))
@@ -1580,12 +1639,52 @@ class FishingOverlay:
         rows = [
             ("金币：%d" % coins, (255, 208, 90, 255)),
             ("炮台 Lv%d  威力x%d" % (lv, lv), (130, 220, 255, 255)),
-            ("点此面板升级（%d 金币）" % (lv * 200), (205, 235, 255, 255)),
+            ("点此面板升级（%d 金币）" % self.app.cannon_upgrade_cost(), (205, 235, 255, 255)),
         ]
         ty = y0 + 10
         for text, col in rows:
             self._hud_text(x0 + 19, ty, text, col, font)
             ty += 19
+
+        # 炮台升级按钮：未满级时显示在炮台右侧；金币足够为金色，否则灰色
+        if lv < CANNON_MAX_LEVEL:
+            bw, bh = 134, 50
+            bx = self.gun_x + cw / 2 + 14
+            by = (self.H - 12) - bh
+            bx = max(12, min(bx, self.W - bw - 12))
+            by = max(12, min(by, self.H - bh - 12))
+            bx, by = int(bx), int(by)  # PIL 的 crop/paste 只接受整数坐标
+            cost = self.app.cannon_upgrade_cost()
+            afford = self.app.coins >= cost
+            self.upgrade_btn = (int(bx), int(by), int(bw), int(bh), afford)
+            # 渐变底
+            btop = (255, 198, 72, 235) if afford else (92, 98, 118, 205)
+            bbot = (212, 138, 22, 235) if afford else (62, 68, 86, 205)
+            bmask = Image.new("L", (bw, bh), 0)
+            ImageDraw.Draw(bmask).rounded_rectangle(
+                [0, 0, bw - 1, bh - 1], radius=12, fill=255)
+            bgrad = Image.new("RGBA", (bw, bh), (0, 0, 0, 0))
+            bgd = ImageDraw.Draw(bgrad)
+            for i in range(bh):
+                t = i / max(1, bh - 1)
+                col = tuple(int(btop[k] + (bbot[k] - btop[k]) * t) for k in range(4))
+                bgd.line([(0, i), (bw, i)], fill=col)
+            bsub = self.img.crop((bx, by, bx + bw, by + bh))
+            bsub.paste(bgrad, (0, 0), bmask)
+            self.img.paste(bsub, (bx, by))
+            self.draw.rounded_rectangle(
+                [bx, by, bx + bw, by + bh], radius=12,
+                outline=(255, 240, 180, 245) if afford else (150, 160, 180, 220), width=2)
+            cx = bx + bw / 2
+            self.draw.text((cx, by + 17), "升级炮台", anchor="mm",
+                           fill=(255, 255, 255, 255) if afford else (205, 210, 220, 235),
+                           font=font)
+            sub = ("Lv%d→%d  %d金币" % (lv, lv + 1, cost)) if afford else ("需 %d 金币" % cost)
+            self.draw.text((cx, by + 37), sub, anchor="mm",
+                           fill=(255, 244, 205, 255) if afford else (185, 190, 205, 225),
+                           font=self.font)
+        else:
+            self.upgrade_btn = None
 
     # ---------- 逻辑 ----------
     _FISH_VALUE = FISH_VALUE  # 引用模块级鱼价表（单一来源）
@@ -1595,6 +1694,12 @@ class FishingOverlay:
         return self._FISH_VALUE.get(name, (5, 0.25))
 
     def tick(self, dt):
+        # 炮台跟随鼠标所在屏幕：鼠标跨屏则把叠加层整体迁移过去
+        cx, cy = getattr(self, "_cur_x", 0), getattr(self, "_cur_y", 0)
+        idx = self._monitor_index_at(cx, cy)
+        if idx is not None and idx != getattr(self, "_mon_index", None):
+            self._set_monitor(idx)
+
         if self.pending_fires:
             # 发射冷却：按住空格时系统自动连发约 30 次/秒，直接全打出去会瞬间
             # 起播几十个开炮音，松手后声音仍持续好几秒。按冷却放行，多余按键丢弃
@@ -1612,8 +1717,8 @@ class FishingOverlay:
             b["life"] -= dt
             hit = None
             for f in self.app.fishes:
-                cx = f.x + f.w / 2
-                cy = f.y + f.h / 2
+                cx = f.x - self.L + f.w / 2
+                cy = f.y - self.T + f.h / 2
                 rad = min(f.w, f.h) / 2 * 0.9 + b["r"]
                 if (b["x"] - cx) ** 2 + (b["y"] - cy) ** 2 <= rad * rad:
                     hit = f
@@ -1673,7 +1778,8 @@ class FishingOverlay:
         fish.hp -= dmg
         fish.last_hit = time.time()  # 记录受击时间，用于血条自动隐藏
         # 掉血提示：在鱼身上方弹出伤害数字
-        self.floaters.append({"x": fish.x + fish.w / 2, "y": fish.y - 6,
+        self.floaters.append({"x": fish.x - self.L + fish.w / 2,
+                              "y": fish.y - self.T - 6,
                               "text": "-%d" % dmg, "t": 0.0, "life": 0.8,
                               "vy": 55, "color": (255, 90, 60)})
         if fish.hp <= 0:
@@ -1681,7 +1787,8 @@ class FishingOverlay:
             self.app.coins += reward
             self.app.remove_fish(fish)
             self.effects.append({"kind": "catch", "x": x, "y": y, "t": 0.0, "life": 0.5})
-            self.floaters.append({"x": fish.x + fish.w / 2, "y": fish.y - 22,
+            self.floaters.append({"x": fish.x - self.L + fish.w / 2,
+                                  "y": fish.y - self.T - 22,
                                   "text": "捕获 +%d" % reward, "t": 0.0, "life": 1.1,
                                   "vy": 45, "color": (120, 255, 120)})
             self.app.sounds.play("catch")
@@ -1692,19 +1799,28 @@ class FishingOverlay:
             if self.app.berserk_enabled:
                 fish.berserk = True
                 fish.berserk_t = BERSERK_DURATION
-                self.floaters.append({"x": fish.x + fish.w / 2, "y": fish.y - 36,
+                self.floaters.append({"x": fish.x - self.L + fish.w / 2, "y": fish.y - self.T - 36,
                                       "text": "狂暴!", "t": 0.0, "life": 1.0,
                                       "vy": 40, "color": (255, 70, 70)})
 
     def _try_upgrade(self):
         lv = self.app.cannon_level
-        if lv >= 7:
+        if lv >= CANNON_MAX_LEVEL:
             return
-        cost = lv * 200
+        cost = self.app.cannon_upgrade_cost()
         if self.app.coins >= cost:
             self.app.coins -= cost
             self.app.cannon_level = lv + 1
+            self.app.sounds.play("levelup")
             self.app.save_config()
+            self.floaters.append({"x": self.gun_x, "y": self.gun_y - 78,
+                                  "text": "升级! Lv%d" % self.app.cannon_level,
+                                  "t": 0.0, "life": 1.0, "vy": 42,
+                                  "color": (255, 222, 120)})
+        else:
+            self.floaters.append({"x": self.gun_x, "y": self.gun_y - 78,
+                                  "text": "金币不足", "t": 0.0, "life": 0.9,
+                                  "vy": 42, "color": (255, 110, 90)})
 
     # ---------- 鼠标钩子 ----------
     def _install_hook(self):
@@ -1719,6 +1835,7 @@ class FishingOverlay:
         if nCode == 0:
             hs = MSLLHOOKSTRUCT.from_address(lParam)
             if wParam == WM_MOUSEMOVE:
+                self._cur_x, self._cur_y = hs.pt.x, hs.pt.y
                 self.mx = hs.pt.x - self.L
                 self.my = hs.pt.y - self.T
             elif wParam == WM_LBUTTONDOWN:
@@ -1727,6 +1844,10 @@ class FishingOverlay:
                 hx0, hy0, hw, hh = self.hud
                 if hx0 <= lx <= hx0 + hw and hy0 <= ly <= hy0 + hh:
                     self._try_upgrade()  # 点 HUD 面板 = 升级炮台
+                elif self.upgrade_btn is not None:
+                    bx, by, bw, bh, _afford = self.upgrade_btn
+                    if bx <= lx <= bx + bw and by <= ly <= by + bh:
+                        self._try_upgrade()  # 点炮台旁的升级按钮
                 # 左键不再发射（改由空格键发射）
         return user32.CallNextHookEx(self._hook if self._hook else 0, nCode, wParam, lParam)
 
@@ -1881,7 +2002,7 @@ class App:
         if isinstance(data.get("coins"), (int, float)):
             self.coins = int(data["coins"])
         if isinstance(data.get("cannon_level"), (int, float)):
-            self.cannon_level = max(1, min(7, int(data["cannon_level"])))
+            self.cannon_level = max(1, min(CANNON_MAX_LEVEL, int(data["cannon_level"])))
         if isinstance(data.get("cannon"), (int, float)):
             self.cannon_index = max(0, int(data["cannon"]))
         self.sound_enabled = bool(data.get("sound", True))
@@ -1975,6 +2096,45 @@ class App:
         """把托盘线程里的操作切回 tkinter 主线程执行。"""
         self.root.after(0, fn)
 
+    def _pick_webview_screen(self, index):
+        """返回 pywebview 的 Screen 对象，用于 create_window 的 screen 参数。
+
+        pywebview（winforms 后端）会按该屏的「逻辑像素」把窗口居中，并自行处理
+        DPI 缩放；若改用手动 window.move 传物理像素，会被二次缩放、把窗口甩到
+        屏幕外（这就是之前窗口消失的原因）。index 取 App.screen（-1/0=主屏，
+        >=1=指定显示器）；无匹配则回退主屏，再不行返回 None（pywebview 默认
+        CenterScreen 仍居中于主屏）。
+        """
+        try:
+            scr = webview.screens()
+        except Exception:
+            return None
+        if not scr:
+            return None
+        mons = get_monitors()
+        primary_rect = None
+        target_rect = None
+        for m in mons:
+            if m["primary"]:
+                primary_rect = m["rect"]
+            if index is not None and index >= 0 and m["index"] == index:
+                target_rect = m["rect"]
+        if target_rect is None:
+            target_rect = primary_rect
+
+        def find(rect):
+            if not rect:
+                return None
+            L, T, R, B = rect
+            for s in scr:
+                if (s.physical_x, s.physical_y,
+                        s.physical_x + s.physical_width,
+                        s.physical_y + s.physical_height) == (L, T, R, B):
+                    return s
+            return None
+
+        return find(target_rect) or find(primary_rect)
+
     # ---------- 商城：HTML（pywebview） ----------
     def open_shop(self):
         """打开商城窗口（HTML 界面，由主线程的 pywebview 宿主渲染）。"""
@@ -1996,6 +2156,7 @@ class App:
         w = webview.create_window(
             "商城", html=html, js_api=api,
             width=760, height=580, resizable=False, on_top=True,
+            screen=self._pick_webview_screen(self.screen),
         )
         self._shop_window = w
         w._alive = True
@@ -2039,6 +2200,7 @@ class App:
         w = webview.create_window(
             "设置", html=html, js_api=api,
             width=520, height=660, resizable=False, on_top=True,
+            screen=self._pick_webview_screen(self.screen),
         )
         self._settings_window = w
         w._alive = True
@@ -2629,23 +2791,43 @@ class ShopAPI:
             "cannons": cannons,
         }
 
-    # ---------- 写操作 ----------
-    def buy(self, path):
-        return self._run_on_main(lambda: self._buy(path))
+    # ---------- 轻量状态（供前端定时轮询，避免每次重编码图片） ----------
+    def get_status(self):
+        """只返回易变的少量字段（金币、鱼池数量），供商城前端定时同步顶栏数字。
 
-    def _buy(self, path):
+        完整 get_data 会重新合成 GIF/编码 PNG，开销大，不宜每秒轮询；这里只读
+        标量，游戏内金币变动、鱼被捕获/新增时，商城顶栏能实时跟随。
+        """
+        return self._run_on_main(self._status)
+
+    def _status(self):
+        return {"coins": self.app.coins,
+                "fish_count": len(self.app.fishes),
+                "max_fish": self.app.max_fish}
+
+    # ---------- 写操作 ----------
+    def buy(self, path, qty=1):
+        return self._run_on_main(lambda: self._buy(path, qty))
+
+    def _buy(self, path, qty=1):
         app = self.app
         sp = next((s for s in app.species_list if s[1] == path), None)
         if sp is None:
-            return {"ok": False, "msg": "找不到该鱼"}
-        price = app.fish_buy_price(os.path.basename(path))
-        if app.coins < price:
-            return {"ok": False, "msg": "金币不足"}
-        if len(app.fishes) >= app.max_fish:
-            return {"ok": False, "msg": "鱼池已满（%d 条）" % app.max_fish}
-        app.add_fish_species(sp)  # 内部按买价扣费
-        app.sounds.play("poke")
-        return {"ok": True, "msg": "购买成功"}
+            return {"ok": False, "msg": "找不到该鱼", "bought": 0}
+        try:
+            qty = max(1, int(qty))
+        except (TypeError, ValueError):
+            qty = 1
+        # add_fish_species 内部按买价扣费，金币不足/鱼池已满时返回 None
+        bought = 0
+        for _ in range(qty):
+            if app.add_fish_species(sp) is None:
+                break
+            bought += 1
+        if bought:
+            app.sounds.play("poke")
+            return {"ok": True, "msg": "成功购买 %d 条" % bought, "bought": bought}
+        return {"ok": False, "msg": "金币不足或鱼池已满", "bought": 0}
 
     def sell(self, fish_id):
         return self._run_on_main(lambda: self._sell(fish_id))
