@@ -4,9 +4,11 @@
 
 格式基于 [Keep a Changelog](https://keepachangelog.com/)，版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
-## [1.0.8] 未发布
+## [1.0.9] 未发布
 
 _开发中，变更将记录于此；发布时本行替换为发布日期。_
+
+## [1.0.8] - 2026-10-18
 
 ### 优化
 - 新增 `pyrightconfig.json`：本项目是零类型标注的脚本型应用（tkinter + PIL + ctypes + pywebview，大量 WinDLL 动态属性 / PIL 常量 / 可选 numpy），编辑器默认 basedpyright recommended 严模式会产生 ~72 ERROR + ~900 WARNING 的噪声（均非功能 bug）。现降为 `standard` 并关闭 `reportConstantRedefinition`/`reportAttributeAccessIssue`/`reportArgumentType`/`reportOptionalMemberAccess`/`reportUninitializedInstanceVariable`/`reportUnknown*` 等严格扩展，全工作区 ERROR 72→0、WARNING→1（仅 numpy 可选导入，代码有纯 Python 回退，保留 warning 提示）。
