@@ -2559,9 +2559,9 @@ class App:
             if not self.fishes:  # 鱼被钓光了，自动补几条继续玩
                 self._spawn_fish(random.choice(self.species_list))
                 self._spawn_fish(random.choice(self.species_list))
-        else:
-            # 非捕鱼模式：用轮询命中检测驱动信息卡，不依赖 Tk 的 <Enter>/<Leave>
-            # （鱼窗口每帧 geometry 移动，Leave 事件时序不可靠，会立刻隐藏）
+        if not self.fishing:
+            # 捕鱼模式由叠加层画信息卡；普通/钓鱼模式用轮询命中检测驱动信息卡，
+            # 不依赖 Tk 的 <Enter>/<Leave>（鱼窗口每帧 geometry 移动，Leave 事件时序不可靠，会立刻隐藏）
             if self.hidden:
                 # 小鱼已隐藏：不再弹信息卡，把残留（含延迟中的）立刻收起
                 self.fish_info.hide(immediate=True)
@@ -2572,7 +2572,7 @@ class App:
                 elif self.fish_info.visible and self.fish_info._hide_at is None:
                     self.fish_info.hide()               # 离开鱼：仅挂一次延迟，不每帧重置（否则永不隐藏）
                 self.fish_info.update()                 # 跟随鱼重绘；延迟到期则真正隐藏
-            self.floater_overlay.update(dt)             # 繁殖提示等浮动文字（到期自动清除）
+        self.floater_overlay.update(dt)                 # 繁殖提示等浮动文字（到期自动清除）
         self._save_ticks += 1
         if self._save_ticks >= 180:  # 约每 6 秒自动存一次位置
             self._save_ticks = 0
