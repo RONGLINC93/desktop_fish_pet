@@ -165,16 +165,30 @@
       ? '便宜小鱼也至少按此概率挣扎；0 = 完全按鱼价值计算'
       : '钓鱼模式开启时生效；0 = 完全按鱼价值计算';
     head.appendChild(t); head.appendChild(h);
-    const chips = document.createElement('div');
-    chips.className = 'chips';
-    (DATA.escape_min_choices || [0, 0.02, 0.05, 0.10]).forEach(c => {
-      const b = document.createElement('button');
-      b.className = 'chip' + (Math.abs(c - DATA.escape_min) < 1e-9 ? ' sel' : '');
-      b.textContent = c === 0 ? '0%（按价值）' : (Math.round(c * 100) + '%');
-      b.onclick = () => callApi('set_escape_min', c);
-      chips.appendChild(b);
-    });
-    box.appendChild(head); box.appendChild(chips);
+    // 手动输入：以「%/秒」为单位，0~40，回车或点「应用」提交（后端钳制到 [0,40]）
+    const row = document.createElement('div');
+    row.style.cssText = 'display:flex;gap:8px;align-items:center;';
+    const inp = document.createElement('input');
+    inp.type = 'number';
+    inp.min = '0'; inp.max = '40'; inp.step = '0.5';
+    inp.value = (DATA.escape_min * 100).toFixed(1).replace(/\.0$/, '');
+    inp.placeholder = '0~40';
+    inp.style.cssText = 'width:88px;padding:6px 8px;border-radius:8px;border:1px solid #cdd8ee;';
+    const btn = document.createElement('button');
+    btn.className = 'btn';
+    btn.textContent = '应用';
+    btn.onclick = () => {
+      let p = parseFloat(inp.value);
+      if (isNaN(p)) { toast('请输入 0~40 的数字'); return; }
+      p = Math.max(0, Math.min(40, p));
+      callApi('set_escape_min', p / 100);
+    };
+    inp.addEventListener('keydown', e => { if (e.key === 'Enter') btn.onclick(); });
+    const hint = document.createElement('span');
+    hint.className = 'hint';
+    hint.textContent = '（%/秒，0 = 按价值计算）';
+    row.appendChild(inp); row.appendChild(btn); row.appendChild(hint);
+    box.appendChild(head); box.appendChild(row);
     return box;
   }
 
