@@ -73,6 +73,16 @@
   </header>
   <div class="body">
     <div class="box"><h3>通用设置</h3><div id="switches"></div></div>
+    <div class="box"><h3>音效</h3>
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;">
+        <span class="name" style="min-width:40px;">音量</span>
+        <input id="vol" type="range" min="0" max="100" value="100"
+               style="flex:1;" oninput="doVolLive(this.value)" onchange="doVolCommit(this.value)">
+        <span id="volVal" style="width:44px;text-align:right;color:#5b7099;font-size:13px;">100%</span>
+      </div>
+      <div class="hint" style="margin-bottom:6px;">音源：内置合成音无需素材；把同名 WAV 放进「音效/」目录即可覆盖对应音效（如 shoot.wav / hit.wav）。</div>
+      <div class="chips" id="src"></div>
+    </div>
     <div class="box"><h3>屏幕</h3>
       <div class="hint" style="margin-bottom:8px;">选择小鱼游走的屏幕，「全部屏幕」可跨显示器游走；捕鱼炮台与钓鱼钩也会停靠在选定屏幕。</div>
       <div class="chips" id="screens"></div>
@@ -252,6 +262,53 @@
     return box;
   }
 
+  // 气泡装饰二级设置行：显示内容（气泡 / 水草 / 都开），缩进挂在「气泡装饰」开关下
+  function buildDecorModeRow(){
+    const box = document.createElement('div');
+    box.style.cssText = 'margin:0 10px 8px;padding:8px 10px;background:#f8fbff;' +
+      'border-left:3px solid #e3ebf9;border-radius:0 10px 10px 0;';
+    const head = document.createElement('div');
+    head.style.cssText = 'display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;margin-bottom:6px;';
+    const t = document.createElement('span');
+    t.style.cssText = 'font-weight:600;font-size:13px;';
+    t.textContent = '└ 显示内容';
+    const h = document.createElement('span');
+    h.style.cssText = 'font-size:12px;color:#5b7099;';
+    h.textContent = DATA.decor_enabled ? '选择气泡、水草或都显示' : '开启气泡装饰后可选';
+    head.appendChild(t); head.appendChild(h);
+    box.appendChild(head);
+    const chips = document.createElement('div');
+    chips.className = 'chips';
+    [['both', '气泡+水草'], ['bubbles', '仅气泡'], ['weeds', '仅水草']].forEach(([m, nm]) => {
+      const b = document.createElement('button');
+      b.className = 'chip' + (DATA.decor_mode === m ? ' sel' : '');
+      b.textContent = nm;
+      b.onclick = () => callApi('set_decor_mode', m);
+      chips.appendChild(b);
+    });
+    box.appendChild(chips);
+    return box;
+  }
+
+  function renderSoundBox(){
+    const vol = Math.round((DATA.sound_volume != null ? DATA.sound_volume : 1) * 100);
+    const slider = document.getElementById('vol');
+    slider.value = vol;
+    document.getElementById('volVal').textContent = vol + '%';
+    const sc = document.getElementById('src');
+    sc.innerHTML = '';
+    [['synth', '内置合成音'], ['wav', '自定义WAV（覆盖）']].forEach(([m, nm]) => {
+      const b = document.createElement('button');
+      b.className = 'chip' + (DATA.sound_source === m ? ' sel' : '');
+      b.textContent = nm;
+      b.onclick = () => callApi('set_sound_source', m);
+      sc.appendChild(b);
+    });
+  }
+
+  function doVolLive(v){ document.getElementById('volVal').textContent = v + '%'; }
+  async function doVolCommit(v){ await callApi('set_sound_volume', parseInt(v, 10) / 100); }
+
   function render(){
     if (!DATA) return;
     // 开关
@@ -272,6 +329,8 @@
       if (s.key === 'fishing') sw.appendChild(buildCannonSkinRow());
       // 钓鱼模式的二级设置：最低挣脱概率，紧跟「钓鱼模式」开关之下
       if (s.key === 'goldminer') sw.appendChild(buildEscapeMinRow());
+      // 气泡装饰的二级设置：显示内容（气泡/水草/都开），紧跟「气泡装饰」开关之下
+      if (s.key === 'decor_enabled') sw.appendChild(buildDecorModeRow());
     });
     // 屏幕选择
     const sc = document.getElementById('screens');
@@ -299,6 +358,7 @@
       b.onclick = () => callApi('set_bait', i);
       ba.appendChild(b);
     });
+    renderSoundBox();
     renderDex();
     renderProfiles();
     renderHotkeys();

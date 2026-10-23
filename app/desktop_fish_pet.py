@@ -15,6 +15,7 @@ Windows 桌面小鱼宠物
 运行：python desktop_fish_pet.py   或双击 启动小鱼.bat
 """
 
+import array
 import ctypes
 import io
 import json
@@ -485,10 +486,21 @@ class SoundManager:
 
     def __init__(self):
         self.enabled = True
-        self._cache = {}  # kind -> 已合成/加载的 WAV 字节
+        self.volume = 1.0      # 音量 0~1（0=静音，但 master 开关仍由 enabled 决定）
+        self.source = "wav"     # "wav"=优先用自定义WAV否则合成；"synth"=始终用内置合成音
+        self._cache = {}        # (kind, source, 体积取3位) -> 已合成/加载的 WAV 字节
+
+    def set_volume(self, v):
+        self.volume = max(0.0, min(1.0, float(v)))
+        self._cache.clear()     # 音量烘焙进采样，变化后失效重算
+
+    def set_source(self, s):
+        if s in ("synth", "wav"):
+            self.source = s
+            self._cache.clear()  # 音源改变后缓存失效
 
     @staticmethod
-    def _synth_segment(seg, sr=_SAMPLE_RATE):
+    def _synth_segment(seg, sr=_SAMPLE_RATE, vol_scale=1.0):
         dur, f0, f1, vol, wave_kind = seg
         n = max(1, int(sr * dur))
         out = bytearray()
@@ -505,26 +517,61 @@ class SoundManager:
                 s = 2.0 * (freq * t - math.floor(freq * t + 0.5))
             else:  # sine
                 s = math.sin(phase)
-            sample = int(max(-1.0, min(1.0, env * vol * s)) * 32767)
+            sample = int(max(-1.0, min(1.0, env * vol * vol_scale * s)) * 32767)
             out += struct.pack("<h", sample)
         return bytes(out)
 
+    @staticmethod
+    def _apply_volume(wav_bytes, vol):
+        """对 16bit PCM 的自定义 WAV 按 vol 缩放采样；不支持的格式原样返回。"""
+        if vol >= 0.999:
+            return wav_bytes
+        try:
+            buf = io.BytesIO(wav_bytes)
+            with wave.open(buf, "rb") as w:
+                nch = w.getnchannels()
+                sw = w.getsampwidth()
+                fr = w.getframerate()
+                frames = w.readframes(w.getnframes())
+            if sw != 2:
+                return wav_bytes
+            arr = array.array("h")
+            arr.frombytes(frames)
+            for i in range(len(arr)):
+                arr[i] = int(arr[i] * vol)
+            out = io.BytesIO()
+            with wave.open(out, "wb") as w:
+                w.setnchannels(nch)
+                w.setsampwidth(sw)
+                w.setframerate(fr)
+                w.writeframes(arr.tobytes())
+            return out.getvalue()
+        except Exception:
+            return wav_bytes
+
     def _render(self, kind):
-        """生成某音效的完整 WAV 字节（单声道 16bit PCM）。优先用自定义文件。"""
-        if kind in self._cache:
-            return self._cache[kind]
-        wav_bytes = None
-        # 若音效目录中存在同名 WAV，则直接用它覆盖内置合成音
-        custom = os.path.join(SOUND_DIR, f"{kind}.wav")
-        if os.path.isfile(custom):
-            try:
-                with open(custom, "rb") as fp:
-                    wav_bytes = fp.read()
-            except Exception:
-                wav_bytes = None
-        if wav_bytes is None:
+        """生成某音效的完整 WAV 字节（单声道 16bit PCM）。
+        source="synth" 时始终用内置合成音；source="wav" 时优先用 音效/ 目录下同名
+        WAV 覆盖（按音量缩放），缺失则回退合成音。"""
+        key = (kind, self.source, round(self.volume, 3))
+        if key in self._cache:
+            return self._cache[key]
+        custom = None
+        if self.source != "synth":
+            p = os.path.join(SOUND_DIR, f"{kind}.wav")
+            if os.path.isfile(p):
+                try:
+                    with open(p, "rb") as fp:
+                        custom = fp.read()
+                except Exception:
+                    custom = None
+        if custom is not None:
+            wav_bytes = self._apply_volume(custom, self.volume) \
+                if self.volume < 0.999 else custom
+        else:
             segs = self._SYNTH.get(kind, [(0.1, 440, 440, 0.4, "sine")])
-            pcm = b"".join(self._synth_segment(s) for s in segs)
+            pcm = b"".join(self._synth_segment(s, self._SAMPLE_RATE, self.volume)
+                           for s in segs)
             buf = io.BytesIO()
             with wave.open(buf, "wb") as w:
                 w.setnchannels(1)
@@ -532,11 +579,13 @@ class SoundManager:
                 w.setframerate(self._SAMPLE_RATE)
                 w.writeframes(pcm)
             wav_bytes = buf.getvalue()
-        self._cache[kind] = wav_bytes
+        self._cache[key] = wav_bytes
         return wav_bytes
 
     def play(self, kind):
         if not self.enabled or winsound is None:
+            return
+        if self.volume <= 0.001:   # 音量为 0 视为静音，跳过播放省开销
             return
         try:
             data = self._render(kind)
@@ -846,15 +895,18 @@ class Fish:
             return "低落", "😢"
         return "平静", "🙂"
 
-    def feed(self):
-        """喂食：恢复饱食度、加亲密度、附带成长，播放音效并飘字。"""
+    def feed(self, play_sound=True):
+        """喂食：恢复饱食度、加亲密度、附带成长，播放音效并飘字。
+        play_sound=False 用于批量喂养：多条鱼同时喂时由调用方统一播一声，
+        避免每条鱼各响一次、叠成刺耳噪音。"""
         self.hunger = 1.0
         self.affinity = min(AFFINITY_MAX, self.affinity + FEED_AFFINITY)
         self.feed_flash = 0.6
         if self.level < GROWTH_MAX_LEVEL:
             self.growth = min(1.0, self.growth + FEED_GROWTH_BONUS)
         try:
-            self.app.sounds.play("poke")
+            if play_sound:
+                self.app.sounds.play("poke")
             self.app.floaters.append({"x": self.x + self.w / 2, "y": self.y - 16,
                                       "text": "进食!", "t": 0.0, "life": 1.0, "vy": 40,
                                       "color": (150, 255, 170)})
@@ -1468,9 +1520,12 @@ class DecorOverlay:
 
     # ---------- 每帧更新 ----------
     def _render_pane(self, p, dt, t):
-        # 生成气泡（每个 pane 独立控制上限，避免多屏时太少）
+        mode = getattr(self.app, "decor_mode", "both")
+        bubbles_on = mode in ("bubbles", "both")
+        weeds_on = mode in ("weeds", "both")
+        # 生成气泡（每个 pane 独立控制上限，避免多屏时太少）；仅“气泡/都开”时生成
         p["_cd"] -= dt
-        if p["_cd"] <= 0 and len(p["bubbles"]) < 18:
+        if bubbles_on and p["_cd"] <= 0 and len(p["bubbles"]) < 18:
             p["_cd"] = random.uniform(0.15, 0.6)
             r = random.uniform(3, 9)
             p["bubbles"].append({"x": random.uniform(0, p["W"]),
@@ -1484,23 +1539,25 @@ class DecorOverlay:
             if b["y"] + b["r"] < 0:
                 p["bubbles"].remove(b)
         p["img"].paste((0, 0, 0, 0), [0, 0, p["W"], p["H"]])
-        # 水草：底部向上的柔和竖线，随风摆动
-        for wd in p["weeds"]:
-            base_x = wd["x"]
-            pts = []
-            seg = 7
-            for k in range(seg + 1):
-                fy = p["H"] - (wd["h"] * k / seg)
-                sway = math.sin(t * wd["sw"] + wd["ph"] + k * 0.5) * (14 * k / seg)
-                pts.append((base_x + sway, fy))
-            p["draw"].line(pts, fill=(70, 170, 130, 120), width=4)
-        # 气泡：细边圆 + 顶部高光
-        for b in p["bubbles"]:
-            x, y, r = b["x"] + math.sin(b["ph"]) * b["dr"], b["y"], b["r"]
-            p["draw"].ellipse([x - r, y - r, x + r, y + r],
-                              outline=(190, 230, 255, 150), width=1)
-            p["draw"].ellipse([x - r * 0.45, y - r * 0.55, x - r * 0.05, y - r * 0.15],
-                              fill=(235, 245, 255, 170))
+        # 水草：底部向上的柔和竖线，随风摆动（仅“水草/都开”时绘制）
+        if weeds_on:
+            for wd in p["weeds"]:
+                base_x = wd["x"]
+                pts = []
+                seg = 7
+                for k in range(seg + 1):
+                    fy = p["H"] - (wd["h"] * k / seg)
+                    sway = math.sin(t * wd["sw"] + wd["ph"] + k * 0.5) * (14 * k / seg)
+                    pts.append((base_x + sway, fy))
+                p["draw"].line(pts, fill=(70, 170, 130, 120), width=4)
+        # 气泡：细边圆 + 顶部高光（仅“气泡/都开”时绘制）
+        if bubbles_on:
+            for b in p["bubbles"]:
+                x, y, r = b["x"] + math.sin(b["ph"]) * b["dr"], b["y"], b["r"]
+                p["draw"].ellipse([x - r, y - r, x + r, y + r],
+                                  outline=(190, 230, 255, 150), width=1)
+                p["draw"].ellipse([x - r * 0.45, y - r * 0.55, x - r * 0.05, y - r * 0.15],
+                                  fill=(235, 245, 255, 170))
         self._push_pane(p)
 
     def update(self, dt):
@@ -2868,7 +2925,11 @@ class App:
         self.cannon_level = 1
         self.cannon_index = 0
         self.sound_enabled = True
+        self.sound_volume = 1.0   # 音量 0~1；load_config 可能覆盖
+        self.sound_source = "wav"  # "wav"=优先自定义WAV否则合成；"synth"=始终合成；load_config 可能覆盖
         self.sounds = SoundManager()
+        self.sounds.volume = self.sound_volume
+        self.sounds.source = self.sound_source
         self.berserk_enabled = True
         self.autostart_enabled = self.is_autostart_enabled()  # 以注册表现状为准
         self.cross_screen = True  # 跨屏游走开关（screen==-1 时为真）；load_config 可能覆盖
@@ -2879,6 +2940,7 @@ class App:
         self.max_fish = MAX_FISH  # 鱼数量上限；load_config 可能覆盖
         # ---------- 养成 / 图鉴 / 装饰 / 昼夜 ----------
         self.decor_enabled = False   # 气泡/水草装饰层开关；load_config 可能覆盖
+        self.decor_mode = "both"     # 装饰内容："both"=气泡+水草 / "bubbles"=仅气泡 / "weeds"=仅水草；load_config 可能覆盖
         self.daynight_enabled = True # 昼夜行为开关；load_config 可能覆盖
         self.bait_index = 0          # 钓鱼鱼饵索引（BAITS）；load_config 可能覆盖
         self.dex = {}                # 图鉴：品种目录名 -> {"count": 累计出现, "best": 最高等级}
@@ -2939,13 +3001,15 @@ class App:
 
     def save_config(self):
         data = {"fish": [], "coins": self.coins, "cannon_level": self.cannon_level,
-                "cannon": self.cannon_index, "sound": self.sound_enabled,
+                "cannon": self.cannon_index,                 "sound": self.sound_enabled, "sound_volume": self.sound_volume,
+                "sound_source": self.sound_source,
                 "berserk": self.berserk_enabled, "fishing": self.fishing,
                 "cross_screen": self.cross_screen, "screen": self.screen,
                 "mouse_penetration": self.mouse_penetration,
                 "escape_min": self.escape_min,
                 "escape": self.escape_enabled,
-                "decor": self.decor_enabled, "daynight": self.daynight_enabled,
+                "decor": self.decor_enabled, "decor_mode": self.decor_mode,
+                "daynight": self.daynight_enabled,
                 "bait": self.bait_index, "dex": self.dex,
                 "hotkeys": self.hotkeys, "profiles": self.profiles,
                 "max_fish": self.max_fish}
@@ -2996,7 +3060,13 @@ class App:
         if isinstance(data.get("cannon"), (int, float)):
             self.cannon_index = max(0, int(data["cannon"]))
         self.sound_enabled = bool(data.get("sound", True))
+        self.sound_volume = max(0.0, min(1.0, float(data.get("sound_volume", 1.0))))
+        self.sound_source = data.get("sound_source", "wav")
+        if self.sound_source not in ("synth", "wav"):
+            self.sound_source = "wav"
         self.sounds.enabled = self.sound_enabled
+        self.sounds.volume = self.sound_volume
+        self.sounds.source = self.sound_source
         self.berserk_enabled = bool(data.get("berserk", True))
         self._restore_fishing = bool(data.get("fishing", False))
         self.cross_screen = bool(data.get("cross_screen", True))
@@ -3019,6 +3089,9 @@ class App:
         self.escape_enabled = bool(data.get("escape", True))
         # 养成 / 图鉴 / 装饰 / 昼夜 / 鱼饵 / 快捷键 / 场景方案
         self.decor_enabled = bool(data.get("decor", False))
+        self.decor_mode = data.get("decor_mode", "both")
+        if self.decor_mode not in ("bubbles", "weeds", "both"):
+            self.decor_mode = "both"
         self.daynight_enabled = bool(data.get("daynight", True))
         if isinstance(data.get("bait"), (int, float)):
             self.bait_index = max(0, min(len(BAITS) - 1, int(data["bait"])))
@@ -3095,6 +3168,7 @@ class App:
             TrayItem("鱼池管理", TrayMenu(
                 TrayItem("放一条小鱼", lambda icon, item: self._invoke(self.add_fish)),
                 TrayItem("随机放几条鱼", lambda icon, item: self._invoke(self.add_fish_random)),
+                TrayItem("喂食所有小鱼", lambda icon, item: self._invoke(self._feed_all)),
             )),
             TrayItem("捕鱼模式", lambda icon, item: self._invoke(self.toggle_fishing),
                      checked=lambda item: self.fishing),
@@ -3102,8 +3176,36 @@ class App:
                      checked=lambda item: self.goldminer),
             TrayItem("允许挣脱", lambda icon, item: self._invoke(self.toggle_escape),
                      checked=lambda item: self.escape_enabled),
-            TrayItem("气泡装饰", lambda icon, item: self._invoke(self.toggle_decor),
-                     checked=lambda item: self.decor_enabled),
+            TrayItem("音效", TrayMenu(
+                TrayItem("开/关", lambda icon, item: self._invoke(self.toggle_sound),
+                         checked=lambda item: self.sound_enabled),
+                TrayItem("音量", TrayMenu(
+                    TrayItem("静音", lambda icon, item: self._invoke(lambda: self.set_sound_volume(0.0)),
+                             checked=lambda item: abs(self.sound_volume) < 0.001),
+                    TrayItem("低", lambda icon, item: self._invoke(lambda: self.set_sound_volume(0.3)),
+                             checked=lambda item: abs(self.sound_volume - 0.3) < 0.001),
+                    TrayItem("中", lambda icon, item: self._invoke(lambda: self.set_sound_volume(0.6)),
+                             checked=lambda item: abs(self.sound_volume - 0.6) < 0.001),
+                    TrayItem("高", lambda icon, item: self._invoke(lambda: self.set_sound_volume(1.0)),
+                             checked=lambda item: abs(self.sound_volume - 1.0) < 0.001),
+                )),
+                TrayItem("音源", TrayMenu(
+                    TrayItem("内置合成音", lambda icon, item: self._invoke(lambda: self.set_sound_source("synth")),
+                             checked=lambda item: self.sound_source == "synth"),
+                    TrayItem("自定义WAV", lambda icon, item: self._invoke(lambda: self.set_sound_source("wav")),
+                             checked=lambda item: self.sound_source == "wav"),
+                )),
+            )),
+            TrayItem("气泡装饰", TrayMenu(
+                TrayItem("开/关", lambda icon, item: self._invoke(self.toggle_decor),
+                         checked=lambda item: self.decor_enabled),
+                TrayItem("气泡+水草", lambda icon, item: self._invoke(lambda: self.set_decor_mode("both")),
+                         checked=lambda item: self.decor_mode == "both"),
+                TrayItem("仅气泡", lambda icon, item: self._invoke(lambda: self.set_decor_mode("bubbles")),
+                         checked=lambda item: self.decor_mode == "bubbles"),
+                TrayItem("仅水草", lambda icon, item: self._invoke(lambda: self.set_decor_mode("weeds")),
+                         checked=lambda item: self.decor_mode == "weeds"),
+            )),
             TrayItem("鼠标穿透", lambda icon, item: self._invoke(self.toggle_mouse_penetration),
                      checked=lambda item: self.mouse_penetration),
             TrayItem("设置", lambda icon, item: self._invoke(self.open_settings)),
@@ -3278,6 +3380,22 @@ class App:
         except Exception:
             pass
 
+    def set_sound_volume(self, v):
+        """设置音量（0~1，钳制）。"""
+        self.sound_volume = max(0.0, min(1.0, float(v)))
+        self.sounds.set_volume(self.sound_volume)
+        self.save_config()
+
+    def set_sound_source(self, s):
+        """设置音源：'synth'=始终用内置合成音；'wav'=优先用自定义WAV否则合成。"""
+        if s not in ("synth", "wav"):
+            return
+        self.sound_source = s
+        self.sounds.set_source(self.sound_source)
+        if self.sound_enabled:
+            self.sounds.play("poke")  # 切换音源给个反馈
+        self.save_config()
+
     def toggle_berserk(self):
         self.berserk_enabled = not self.berserk_enabled
         if not self.berserk_enabled:  # 关掉时立刻解除所有鱼的狂暴
@@ -3434,6 +3552,14 @@ class App:
 
     def toggle_decor(self):
         self.decor_enabled = not self.decor_enabled
+        self.save_config()
+        self._update_tray_safe()
+
+    def set_decor_mode(self, m):
+        """设置装饰内容：'both'=气泡+水草；'bubbles'=仅气泡；'weeds'=仅水草。"""
+        if m not in ("both", "bubbles", "weeds"):
+            return
+        self.decor_mode = m
         self.save_config()
         self._update_tray_safe()
 
@@ -3613,8 +3739,9 @@ class App:
 
     def _feed_all(self):
         for f in list(self.fishes):
-            f.feed()
+            f.feed(play_sound=False)  # 批量喂养每条鱼不单独播音
         if self.fishes:
+            self.sounds.play("poke")  # 统一只响一声，避免叠成噪音
             self.save_config()
 
     # ---------- 鼠标穿透 ----------
@@ -4362,6 +4489,8 @@ class SettingsAPI:
             "fishing": app.fishing,
             "goldminer": app.goldminer,
             "sound_enabled": app.sound_enabled,
+            "sound_volume": app.sound_volume,
+            "sound_source": app.sound_source,
             "autostart": app.is_autostart_enabled(),
             "cross_screen": app.cross_screen,
             "screen": app.screen,
@@ -4374,6 +4503,7 @@ class SettingsAPI:
             "cannon_index": app.cannon_index,
             "cannon_count": len(find_cannons()),
             "decor_enabled": app.decor_enabled,
+            "decor_mode": app.decor_mode,
             "daynight_enabled": app.daynight_enabled,
             "is_night": app.is_night(),
             "bait": app.bait_index,
@@ -4447,6 +4577,31 @@ class SettingsAPI:
     def toggle_decor(self):
         return self._run_on_main(lambda: self._toggle("toggle_decor"))
 
+    def set_sound_volume(self, v):
+        def _t():
+            self.app.set_sound_volume(float(v))
+            return {"ok": True, "msg": "音量 %d%%" % round(self.app.sound_volume * 100)}
+        return self._run_on_main(_t)
+
+    def set_sound_source(self, s):
+        valid = ("synth", "wav")
+        if s not in valid:
+            return {"ok": False, "msg": "无效音源"}
+        def _t():
+            self.app.set_sound_source(s)
+            return {"ok": True, "msg": "音源：%s" % ("合成音" if s == "synth" else "自定义WAV")}
+        return self._run_on_main(_t)
+
+    def set_decor_mode(self, m):
+        valid = ("both", "bubbles", "weeds")
+        if m not in valid:
+            return {"ok": False, "msg": "无效模式"}
+        def _t():
+            self.app.set_decor_mode(m)
+            return {"ok": True, "msg": "装饰：%s" % ({
+                "both": "气泡+水草", "bubbles": "仅气泡", "weeds": "仅水草"}[m])}
+        return self._run_on_main(_t)
+
     def toggle_daynight(self):
         return self._run_on_main(lambda: self._toggle("toggle_daynight"))
 
@@ -4460,9 +4615,10 @@ class SettingsAPI:
         def _t():
             n = 0
             for f in list(self.app.fishes):
-                f.feed()
+                f.feed(play_sound=False)  # 批量喂养每条鱼不单独播音
                 n += 1
             if n:
+                self.app.sounds.play("poke")  # 统一只响一声，避免叠成噪音
                 self.app.save_config()
             return {"ok": n > 0,
                     "msg": "已喂食 %d 条小鱼" % n if n else "鱼池里还没有小鱼"}
