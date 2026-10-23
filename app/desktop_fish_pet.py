@@ -22,6 +22,7 @@ import math
 import os
 import random
 import re
+import shutil
 import struct
 import sys
 import threading
@@ -87,6 +88,26 @@ GROWTH_MAX_LEVEL = 10
 # 繁殖：达到该等级视为成年「大鱼」，可生小鱼；每条两次生育的冷却与鱼池上限
 MATURE_LEVEL = 6
 BREED_COOLDOWN = 120.0
+# ---------- 养成（喂食 / 亲密度 / 情绪） ----------
+HUNGER_DECAY = 0.004      # 饱食度每秒衰减（约 4 分钟从满到饿）
+HUNGER_LOW = 0.30         # 饱食度低于此视为「饿」：游动变慢、情绪低落
+FEED_AFFINITY = 6         # 每次喂食亲密度 +6（封顶 AFFINITY_MAX）
+FEED_GROWTH_BONUS = 0.08  # 每次喂食附带成长进度（加速升级）
+AFFINITY_MAX = 100
+AFFINITY_HAPPY = 70       # 亲密度高于此视为「亲近」：愿意靠近鼠标
+# ---------- 进化 ----------
+EVO_LEVELS = [5, 8]       # 达到这些等级时触发进化（一阶、二阶）
+EVO_SCALE_STEP = 0.10     # 每进化一阶额外缩放
+EVO_VALUE_MUL = 0.5       # 每进化一阶，价值/卖价倍率 +50%
+# ---------- 昼夜 ----------
+NIGHT_HOURS = (20, 6)     # 20:00 ~ 06:00 视为夜间
+NIGHT_SPEED = 0.55        # 夜间鱼速倍率（夜里游得慢、更嗜睡）
+# ---------- 钓鱼增强（鱼饵 / 连击） ----------
+# 鱼饵：普通免费；稀有消耗金币、降低挣脱概率、略微提升稀有鱼收益
+BAITS = [("普通鱼饵", 1.0, 1.0), ("稀有鱼饵", 0.65, 1.6)]
+BAIT_COST = 10            # 稀有鱼饵每次放钩消耗金币
+COMBO_STEP = 0.1          # 每连击一点，奖励 +10%
+COMBO_MAX = 1.0           # 连击奖励封顶 +100%
 MAX_FISH = 15
 # 鱼数量上限：可选预设与硬上限（防止误设过大影响性能）
 MAX_FISH_CHOICES = [5, 10, 15, 20, 30, 50]
@@ -542,7 +563,7 @@ class SoundManager:
 
 # ---------------------------------------------------------------- 信息卡绘制
 INFO_CARD_W = 212
-INFO_CARD_H = 110
+INFO_CARD_H = 126
 INFO_CARD_LINGER = 2.0  # 鼠标离开鱼后，信息卡继续跟随鱼显示的秒数（鱼在游动，便于看清）
 
 
@@ -592,9 +613,10 @@ def draw_fish_info_card(img, draw, fish, x, y, font):
         bb = draw.textbbox((0, 0), text, font=font)
         return bb[2] - bb[0]
 
-    # 第一行：名字（白）+ 等级（青）+ 成年（金）/ 狂暴（红）
+    # 第一行：名字（白，玩家命名优先）+ 等级（青）+ 成年（金）/ 进化（紫）/ 狂暴（红）
     tx = x + 18
-    name = getattr(fish, "name", "")
+    name = fish.display_name() if hasattr(fish, "display_name") \
+        else getattr(fish, "name", "")
     _shadow_text(tx, y + 8, name, (240, 245, 255))
     tx += _tw(name) + 7
     _shadow_text(tx, y + 8, "Lv%d" % fish.level, (130, 220, 255))
@@ -602,6 +624,10 @@ def draw_fish_info_card(img, draw, fish, x, y, font):
     if getattr(fish, "is_mature", None) and fish.is_mature():
         _shadow_text(tx, y + 8, "成年", (255, 205, 90))
         tx += _tw("成年") + 6
+    if getattr(fish, "evo_stage", 0) > 0:
+        _et = "进化×%d" % fish.evo_stage
+        _shadow_text(tx, y + 8, _et, (195, 150, 255))
+        tx += _tw(_et) + 6
     if berserk:
         _shadow_text(tx, y + 8, "狂暴", (255, 110, 100))
 
@@ -654,14 +680,25 @@ def draw_fish_info_card(img, draw, fish, x, y, font):
         _shadow_text(x + 18, by_breed, "繁衍", (150, 160, 180))
         _shadow_text(x + 52, by_breed, "Lv%d成年可繁殖" % MATURE_LEVEL, (150, 160, 180))
 
+    # 好感 / 饱食 / 情绪
+    aff = int(getattr(fish, "affinity", 50))
+    hun = int(getattr(fish, "hunger", 1.0) * 100)
+    try:
+        _mood, _ = fish.mood()
+    except Exception:
+        _mood = "平静"
+    _shadow_text(x + 18, y + 90, "好感 %d" % aff, (255, 170, 210))
+    _shadow_text(x + 92, y + 90, "饱食 %d%%" % hun, (160, 230, 200))
+    _right(_mood, y + 90, (220, 225, 255))
+
     # 底部：价值（左）+ 速度（右）
     try:
         value = int(fish.app._fish_info(fish)[0])
     except Exception:
         value = 0
     speed = int(getattr(fish, "base_speed", 0))
-    _shadow_text(x + 18, y + 90, "价值 %d" % value, (255, 220, 120))
-    _right("速度 %d" % speed, y + 90, (160, 220, 255))
+    _shadow_text(x + 18, y + 110, "价值 %d" % value, (255, 220, 120))
+    _right("速度 %d" % speed, y + 110, (160, 220, 255))
 
     return cw, ch
 
@@ -670,13 +707,19 @@ def draw_fish_info_card(img, draw, fish, x, y, font):
 class Fish:
     TICK_MS = 33
 
-    def __init__(self, app, species, scale, x, y, level=1, growth=0.0):
+    def __init__(self, app, species, scale, x, y, level=1, growth=0.0,
+                 custom_name="", affinity=50.0, hunger=1.0, evo_stage=0):
         self.app = app
         self.species = species
         self.name = species[0]  # find_species 返回的 (显示名, 目录)
         self.base_scale = scale
         self.level = max(1, int(level))
         self.growth = max(0.0, min(1.0, float(growth)))
+        self.custom_name = str(custom_name)[:16]
+        self.affinity = max(0.0, min(AFFINITY_MAX, float(affinity)))
+        self.hunger = max(0.0, min(1.0, float(hunger)))
+        self.evo_stage = int(evo_stage)
+        self.feed_flash = 0.0
         self.frame_ms = 90
         self._apply_scale()
         w, h = self.w, self.h
@@ -725,9 +768,10 @@ class Fish:
 
     # ---------- 成长 / 缩放 ----------
     def _effective_scale(self):
-        """由基础尺寸与等级推导实际渲染缩放（封顶 GROWTH_MAX_FACTOR）。"""
-        return min(self.base_scale * (1.0 + (self.level - 1) * GROWTH_STEP),
-                   self.base_scale * GROWTH_MAX_FACTOR)
+        """由基础尺寸、进化阶与等级推导实际渲染缩放（封顶 GROWTH_MAX_FACTOR）。"""
+        base = self.base_scale + self.evo_stage * EVO_SCALE_STEP
+        return min(base * (1.0 + (self.level - 1) * GROWTH_STEP),
+                   base * GROWTH_MAX_FACTOR)
 
     def _apply_scale(self):
         """按当前等级重算实际缩放并重新加载帧序列 / 尺寸 / 基础速度。"""
@@ -742,6 +786,72 @@ class Fish:
     def is_mature(self):
         """达到 MATURE_LEVEL 视为成年「大鱼」，可以生小鱼。"""
         return self.level >= MATURE_LEVEL
+
+    # ---------- 养成 / 进化 ----------
+    def display_name(self):
+        """信息卡/浮动文字显示用的名字：玩家命名优先，否则品种名。"""
+        return self.custom_name or self.name
+
+    def evolution_stage(self):
+        """按当前等级应达到的进化阶数（达到 EVO_LEVELS 中的第几个里程碑）。"""
+        stage = 0
+        for lv in EVO_LEVELS:
+            if self.level >= lv:
+                stage += 1
+        return stage
+
+    def _check_evolution(self):
+        """等级达到里程碑且未记录时触发进化：阶数 +1、体型微增、飘字与音效。"""
+        want = self.evolution_stage()
+        if want > self.evo_stage:
+            self.evo_stage = want
+            self._apply_scale()
+            try:
+                self.app.sounds.play("levelup")
+            except Exception:
+                pass
+            try:
+                self.app.floaters.append({"x": self.x + self.w / 2, "y": self.y - 20,
+                                          "text": "进化! ×%d" % self.evo_stage,
+                                          "t": 0.0, "life": 1.4, "vy": 40,
+                                          "color": (185, 160, 255)})
+            except Exception:
+                pass
+            self.app.save_config()
+
+    def evolution_value_mul(self):
+        """进化带来的价值/卖价倍率。"""
+        return 1.0 + self.evo_stage * EVO_VALUE_MUL
+
+    def mood(self):
+        """当前情绪标签（用于信息卡 / 浮动表情）：返回 (文字, 表情)。"""
+        if self.berserk:
+            return "狂暴", "😡"
+        if self.hunger < HUNGER_LOW:
+            return "饥饿", "😋"
+        if self.app.is_night():
+            return "困倦", "😴"
+        if self.affinity >= AFFINITY_HAPPY:
+            return "亲近", "😊"
+        if self.affinity <= 20:
+            return "低落", "😢"
+        return "平静", "🙂"
+
+    def feed(self):
+        """喂食：恢复饱食度、加亲密度、附带成长，播放音效并飘字。"""
+        self.hunger = 1.0
+        self.affinity = min(AFFINITY_MAX, self.affinity + FEED_AFFINITY)
+        self.feed_flash = 0.6
+        if self.level < GROWTH_MAX_LEVEL:
+            self.growth = min(1.0, self.growth + FEED_GROWTH_BONUS)
+        try:
+            self.app.sounds.play("poke")
+            self.app.floaters.append({"x": self.x + self.w / 2, "y": self.y - 16,
+                                      "text": "进食!", "t": 0.0, "life": 1.0, "vy": 40,
+                                      "color": (150, 255, 170)})
+        except Exception:
+            pass
+        self.app.save_config()
 
     # ---------- Win32 图层 ----------
     def _make_dib(self, w, h):
@@ -793,12 +903,13 @@ class Fish:
 
     # ---------- 行为 ----------
     def poke(self):
-        """被点了一下：受惊猛窜。"""
+        """被点了一下：受惊猛窜，亲密度略降。"""
         ang = random.uniform(0, 2 * math.pi)
         sp = self.base_speed * 4
         self.vx = math.cos(ang) * sp
         self.vy = math.sin(ang) * sp * 0.5
         self.dart_t = 0.8
+        self.affinity = max(0.0, self.affinity - 0.5)
         self.app.sounds.play("poke")
 
     def tick(self, dt):
@@ -812,7 +923,17 @@ class Fish:
             self.berserk_t -= dt
             if self.berserk_t <= 0:
                 self.berserk = False
-        mul = BERSERK_MUL if self.berserk else 1.0
+        # 饱食度随时间下降；喂食反馈动画计时
+        self.hunger = max(0.0, self.hunger - HUNGER_DECAY * dt)
+        if self.feed_flash > 0:
+            self.feed_flash = max(0.0, self.feed_flash - dt)
+        # 移动节奏：夜间更慢，饥饿时乏力
+        pace = 1.0
+        if self.app.is_night():
+            pace *= NIGHT_SPEED
+        if self.hunger < HUNGER_LOW:
+            pace *= 0.7
+        mul = (BERSERK_MUL if self.berserk else 1.0) * pace
 
         # 成长：随时间积累经验，满级后停止；升级时放大体型并播放音效
         if self.level < GROWTH_MAX_LEVEL:
@@ -824,6 +945,8 @@ class Fish:
                 self.app.sounds.play("levelup")
         else:
             self.growth = 1.0
+        # 进化：达到里程碑等级时触发（体型/价值跃升）
+        self._check_evolution()
 
         # 繁殖：成年鱼每隔一段时间在附近随机繁殖若干条小鱼（受鱼池上限约束，不消耗金币）
         if self.is_mature():
@@ -1177,6 +1300,148 @@ class FloaterOverlay:
             self._active = True
         elif self._active:
             self._blank()
+
+    def destroy(self):
+        try:
+            if getattr(self, "hbm", None):
+                gdi32.SelectObject(self.hdc_mem, self.old_hbm)
+                gdi32.DeleteObject(self.hbm)
+            gdi32.DeleteDC(self.hdc_mem)
+            user32.ReleaseDC(0, self.hdc_screen)
+        except Exception:
+            pass
+        try:
+            self.win.destroy()
+        except Exception:
+            pass
+
+
+# ---------------------------------------------------------------- 装饰叠加层
+class DecorOverlay:
+    """鼠标穿透的装饰层：从底部升起的气泡 + 底部摇曳水草。
+    纯装饰、不参与交互；开关关闭时保持空白、不重绘。"""
+
+    def __init__(self, app):
+        self.app = app
+        L = user32.GetSystemMetrics(SM_XVIRTUALSCREEN)
+        T = user32.GetSystemMetrics(SM_YVIRTUALSCREEN)
+        W = user32.GetSystemMetrics(SM_CXVIRTUALSCREEN)
+        H = user32.GetSystemMetrics(SM_CYVIRTUALSCREEN)
+        if not (W > 0 and H > 0):
+            L, T, R, B = app.workarea
+            W, H = R - L, B - T
+        self.L, self.T, self.W, self.H = L, T, W, H
+
+        self.win = tk.Toplevel(app.root)
+        self.win.overrideredirect(True)
+        self.win.attributes("-topmost", True)
+        self.win.attributes("-disabled", True)
+        self.win.configure(bg="black")
+        self.win.geometry("%dx%d+%d+%d" % (W, H, L, T))
+        self.win.update_idletasks()
+
+        self.hwnd = user32.GetAncestor(self.win.winfo_id(), GA_ROOT)
+        ex = user32.GetWindowLongPtrW(self.hwnd, GWL_EXSTYLE)
+        ex |= WS_EX_LAYERED | WS_EX_TOOLWINDOW | WS_EX_TRANSPARENT  # 整窗鼠标穿透
+        user32.SetWindowLongPtrW(self.hwnd, GWL_EXSTYLE, ex)
+
+        self.hdc_screen = user32.GetDC(0)
+        self.hdc_mem = gdi32.CreateCompatibleDC(self.hdc_screen)
+        self.hbm = None
+        self.old_hbm = None
+        self.bits = None
+        self._make_dib(W, H)
+        self.img = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+        self.draw = ImageDraw.Draw(self.img)
+        self._active = False
+        # 气泡与水草状态
+        self.bubbles = []
+        self._spawn_cd = 0.0
+        self.weeds = []
+        for i in range(max(6, W // 140)):
+            self.weeds.append({"x": random.uniform(0, W),
+                               "h": random.uniform(70, 190),
+                               "ph": random.uniform(0, 6.28),
+                               "sw": random.uniform(0.5, 1.1)})
+        self._blank()
+
+    def _make_dib(self, w, h):
+        if getattr(self, "hbm", None):
+            gdi32.SelectObject(self.hdc_mem, self.old_hbm)
+            gdi32.DeleteObject(self.hbm)
+        bi = BITMAPINFO()
+        bi.bmiHeader.biSize = ctypes.sizeof(BITMAPINFOHEADER)
+        bi.bmiHeader.biWidth = w
+        bi.bmiHeader.biHeight = -h
+        bi.bmiHeader.biPlanes = 1
+        bi.bmiHeader.biBitCount = 32
+        bi.bmiHeader.biCompression = 0  # BI_RGB
+        bits = ctypes.c_void_p()
+        self.hbm = gdi32.CreateDIBSection(self.hdc_screen, ctypes.byref(bi), 0,
+                                          ctypes.byref(bits), None, 0)
+        self.bits = bits
+        self.old_hbm = gdi32.SelectObject(self.hdc_mem, self.hbm)
+        self.dib_size = (w, h)
+
+    def _push(self):
+        r, g, b, a = self.img.split()
+        bgra = Image.merge("RGBA", (b, g, r, a)).tobytes()
+        ctypes.memmove(self.bits, bgra, self.W * self.H * 4)
+        blend = BLENDFUNCTION(0, 0, 255, 1)
+        dst = POINT(int(self.L), int(self.T))
+        sz = SIZE(self.W, self.H)
+        src = POINT(0, 0)
+        user32.UpdateLayeredWindow(self.hwnd, self.hdc_screen, ctypes.byref(dst),
+                                   ctypes.byref(sz), self.hdc_mem, ctypes.byref(src),
+                                   0, ctypes.byref(blend), ULW_ALPHA)
+
+    def _blank(self):
+        self.img.paste((0, 0, 0, 0), [0, 0, self.W, self.H])
+        self._push()
+        self._active = False
+
+    def update(self, dt):
+        if not getattr(self.app, "decor_enabled", False):
+            if self._active:
+                self._blank()
+            return
+        # 生成气泡（间隔、上限控制）
+        self._spawn_cd -= dt
+        if self._spawn_cd <= 0 and len(self.bubbles) < 26:
+            self._spawn_cd = random.uniform(0.15, 0.6)
+            r = random.uniform(3, 9)
+            self.bubbles.append({"x": random.uniform(0, self.W),
+                                 "y": self.H + r + 5,
+                                 "r": r, "vy": random.uniform(22, 60),
+                                 "ph": random.uniform(0, 6.28),
+                                 "dr": random.uniform(6, 18)})
+        for b in list(self.bubbles):
+            b["y"] -= b["vy"] * dt
+            b["ph"] += dt * 2.0
+            if b["y"] + b["r"] < 0:
+                self.bubbles.remove(b)
+
+        self.img.paste((0, 0, 0, 0), [0, 0, self.W, self.H])
+        t = self.app._decor_t if hasattr(self.app, "_decor_t") else 0.0
+        # 水草：底部向上的柔和竖线，随风摆动
+        for wd in self.weeds:
+            base_x = wd["x"]
+            pts = []
+            seg = 7
+            for k in range(seg + 1):
+                fy = self.H - (wd["h"] * k / seg)
+                sway = math.sin(t * wd["sw"] + wd["ph"] + k * 0.5) * (14 * k / seg)
+                pts.append((base_x + sway, fy))
+            self.draw.line(pts, fill=(70, 170, 130, 120), width=4)
+        # 气泡：细边圆 + 顶部高光
+        for b in self.bubbles:
+            x, y, r = b["x"] + math.sin(b["ph"]) * b["dr"], b["y"], b["r"]
+            self.draw.ellipse([x - r, y - r, x + r, y + r],
+                              outline=(190, 230, 255, 150), width=1)
+            self.draw.ellipse([x - r * 0.45, y - r * 0.55, x - r * 0.05, y - r * 0.15],
+                              fill=(235, 245, 255, 170))
+        self._push()
+        self._active = True
 
     def destroy(self):
         try:
@@ -1987,6 +2252,8 @@ class GoldMinerOverlay:
         self.retract_base = 1000.0
         self.carry_fish = None
         self.carry_speed = 1.0
+        self.combo = 0            # 连续钓到（不失手）计数，用于连击奖励
+        self._cast_bait = 0       # 本趟放钩实际使用的鱼饵索引（钱不够自动降级为普通）
         self.floaters = []
         self.effects = []
         self._carry_cache = {}     # (id(fish), frame) -> 已还原的直乘 alpha 图像
@@ -2138,12 +2405,23 @@ class GoldMinerOverlay:
                     self._space_down = False
         return user32.CallNextHookEx(self._kb_hook if self._kb_hook else 0, nCode, wParam, lParam)
 
+    def _begin_cast(self):
+        """放钩时处理鱼饵：稀有鱼饵消耗金币，钱不够则本趟按普通鱼饵。"""
+        idx = getattr(self.app, "bait_index", 0)
+        if idx > 0 and self.app.coins >= BAIT_COST:
+            self.app.coins -= BAIT_COST
+            self._cast_bait = idx
+        else:
+            self._cast_bait = 0
+        self.app.save_config()
+
     def _space_action(self):
         """空格动作：空闲→放钩；飞行中→立即收回（不必等伸到最长/出屏）。
         收回中（含钩着鱼慢速回线）再按无效。"""
         if self.state == "idle":
             self.state = "firing"
             self.len = self.rest_len
+            self._begin_cast()
             self.app.sounds.play("poke")
         elif self.state == "firing":
             self.state = "retract"
@@ -2244,10 +2522,14 @@ class GoldMinerOverlay:
         value, _ = self._fish_info(fish)
         rate = min(ESCAPE_RATE_MAX,
                    ESCAPE_RATE_BASE * (1.0 + value / ESCAPE_VALUE_SCALE))
-        return max(getattr(self.app, "escape_min", 0.0), rate)
+        rate = max(getattr(self.app, "escape_min", 0.0), rate)
+        # 鱼饵降低挣脱概率（稀有鱼饵更稳）
+        _, esc_mul, _ = BAITS[getattr(self, "_cast_bait", 0)]
+        return rate * esc_mul
 
     def _escape(self, fish):
         """鱼挣脱：恢复桌面窗口、受惊猛窜逃走，飘「挣脱!」并播滑脱音效。"""
+        self.combo = 0  # 挣脱则连击中断
         try:
             user32.ShowWindow(fish.hwnd, SW_SHOW)  # 恢复桌面鱼，避免凭空消失
         except Exception:
@@ -2271,14 +2553,20 @@ class GoldMinerOverlay:
 
     def _collect(self, fish):
         value, _ = self._fish_info(fish)
-        reward = value * fish.level
+        self.combo += 1
+        bonus = min(COMBO_MAX, (self.combo - 1) * COMBO_STEP)  # 连击奖励
+        _, _, rare_mul = BAITS[getattr(self, "_cast_bait", 0)]
+        reward = int(value * fish.level * (1.0 + bonus) * rare_mul)
         self.app.coins += reward
         self.app.remove_fish(fish)  # 内部会 destroy 鱼窗口
         self.app.sounds.play("catch")
         self.effects.append({"kind": "catch", "x": self.pivot[0],
                              "y": self.pivot[1] + 24, "t": 0.0, "life": 0.5})
+        txt = "钓到! +%d" % reward
+        if self.combo >= 2:
+            txt = "%s  连击×%d" % (txt, self.combo)
         self.floaters.append({"x": self.pivot[0], "y": self.pivot[1] + 40,
-                              "text": "钓到! +%d" % reward, "t": 0.0, "life": 1.1,
+                              "text": txt, "t": 0.0, "life": 1.2,
                               "vy": 45, "color": (120, 255, 120)})
 
     # ---------- 绘制 ----------
@@ -2375,10 +2663,15 @@ class GoldMinerOverlay:
                                     outline=(120, 150, 200, 220), width=2)
         self._hud_text(x0 + 16, y0 + 11, "金币：%d" % self.app.coins,
                        (255, 222, 120, 255), font)
+        bait_name = BAITS[getattr(self.app, "bait_index", 0)][0]
         self._hud_text(x0 + 16, y0 + 35,
-                       "空格放钩 · 鱼会挣脱" if self.app.escape_enabled
-                       else "空格放钩 · 鱼跑不掉",
+                       "空格放钩 · %s · %s" % (
+                           bait_name,
+                           "鱼会挣脱" if self.app.escape_enabled else "鱼跑不掉"),
                        (205, 235, 255, 255), font)
+        if self.combo >= 2:
+            self._hud_text(x0 + 16, y0 + 59, "连击 ×%d" % self.combo,
+                           (255, 200, 120, 255), font)
 
     def _hud_text(self, x, y, text, fill, font):
         if font:
@@ -2523,6 +2816,14 @@ class App:
         self.escape_enabled = True  # 钓鱼模式「允许挣脱」总开关：关掉后收线必中，鱼绝不逃走；load_config 可能覆盖
         self.mouse_penetration = False  # 鼠标穿透：整窗点击穿透到桌面；load_config 可能覆盖
         self.max_fish = MAX_FISH  # 鱼数量上限；load_config 可能覆盖
+        # ---------- 养成 / 图鉴 / 装饰 / 昼夜 ----------
+        self.decor_enabled = False   # 气泡/水草装饰层开关；load_config 可能覆盖
+        self.daynight_enabled = True # 昼夜行为开关；load_config 可能覆盖
+        self.bait_index = 0          # 钓鱼鱼饵索引（BAITS）；load_config 可能覆盖
+        self.dex = {}                # 图鉴：品种目录名 -> {"count": 累计出现, "best": 最高等级}
+        self.hotkeys = {}            # 自定义快捷键：动作名 -> "ctrl+alt+x"
+        self.profiles = []           # 场景方案：[{"name","screen","max_fish","fishing","goldminer"}]
+        self.decor = None            # 装饰叠加层（气泡/水草），启动时创建
         self._save_ticks = 0
 
         # 运行期数据目录（配置 / 日志）——发布包不含该目录，需在运行时确保存在
@@ -2535,22 +2836,31 @@ class App:
         self.apply_roam()
         L, T, R, B = self.roam  # 鱼在游走边界内生成/收拢
         if saved:
-            for sp, scale, x, y, level, growth in saved:
-                w, h = self._species_size(sp, scale)
-                x = max(L, min(x, R - w))
-                y = max(T, min(y, B - h))
-                self.fishes.append(Fish(self, sp, scale, x, y, level, growth))
+            for it in saved:
+                sp = it["sp"]
+                w, h = self._species_size(sp, it["scale"])
+                x = max(L, min(it["x"], R - w))
+                y = max(T, min(it["y"], B - h))
+                f = Fish(self, sp, it["scale"], x, y, it["level"], it["growth"],
+                         custom_name=it["name"], affinity=it["affinity"],
+                         hunger=it["hunger"], evo_stage=it["evo"])
+                self.fishes.append(f)
+                self.register_dex(f, inc=False)  # 加载不重复累计出现次数
         if not self.fishes:  # 没有有效配置时给两条默认鱼
             cx, cy = (L + R) / 2, (T + B) / 2
             for i in range(2):
                 sp = self.species_list[i % len(self.species_list)]
-                self.fishes.append(Fish(self, sp, App.SCALES[0][1], cx - 160 + i * 320, cy))
+                f = Fish(self, sp, App.SCALES[0][1], cx - 160 + i * 320, cy)
+                self.fishes.append(f)
+                self.register_dex(f, inc=False)
 
         self.build_tray()
         # 鱼信息浮层（悬停显示），需在 build_tray 之后创建
         self.fish_info = FishInfoOverlay(self)
         # 普通模式的浮动文字浮层（繁殖提示等），需在 build_tray 之后创建
         self.floater_overlay = FloaterOverlay(self)
+        self.decor = DecorOverlay(self)  # 气泡/水草装饰层（可开关）
+        self._decor_t = 0.0
         # 上次若开启了鼠标穿透，则恢复窗口样式（鱼与信息卡整窗穿透）
         if self.mouse_penetration:
             self._apply_mouse_penetration()
@@ -2558,6 +2868,7 @@ class App:
         if getattr(self, "_restore_fishing", False):
             self.toggle_fishing()
         self.root.after(App.TICK_MS, self._loop)
+        self._start_hotkeys()  # 全局快捷键（低层键盘钩子）
         self.root.mainloop()
 
     # ---------- 配置持久化 ----------
@@ -2573,11 +2884,18 @@ class App:
                 "mouse_penetration": self.mouse_penetration,
                 "escape_min": self.escape_min,
                 "escape": self.escape_enabled,
+                "decor": self.decor_enabled, "daynight": self.daynight_enabled,
+                "bait": self.bait_index, "dex": self.dex,
+                "hotkeys": self.hotkeys, "profiles": self.profiles,
                 "max_fish": self.max_fish}
         for f in self.fishes:
             rel = os.path.relpath(f.species[1], FISH_ROOT)
             data["fish"].append({"path": rel, "scale": round(f.base_scale, 3),
                                  "level": f.level, "growth": round(f.growth, 3),
+                                 "name": getattr(f, "custom_name", ""),
+                                 "affinity": round(getattr(f, "affinity", 50.0), 1),
+                                 "hunger": round(getattr(f, "hunger", 1.0), 3),
+                                 "evo": getattr(f, "evo_stage", 0),
                                  "x": int(f.x), "y": int(f.y)})
         try:
             with open(CONFIG_PATH, "w", encoding="utf-8") as fp:
@@ -2603,7 +2921,12 @@ class App:
             y = float(item.get("y", 0.0))
             level = int(item.get("level", 1))
             growth = float(item.get("growth", 0.0))
-            out.append((sp, scale, x, y, level, growth))
+            out.append({"sp": sp, "scale": scale, "x": x, "y": y,
+                        "level": level, "growth": growth,
+                        "name": str(item.get("name", ""))[:16],
+                        "affinity": float(item.get("affinity", 50.0)),
+                        "hunger": float(item.get("hunger", 1.0)),
+                        "evo": int(item.get("evo", 0))})
         # 金币与炮台等级持久化
         if isinstance(data.get("coins"), (int, float)):
             self.coins = int(data["coins"])
@@ -2633,6 +2956,17 @@ class App:
                 em = 0.0
             self.escape_min = max(0.0, min(ESCAPE_RATE_MAX, em))
         self.escape_enabled = bool(data.get("escape", True))
+        # 养成 / 图鉴 / 装饰 / 昼夜 / 鱼饵 / 快捷键 / 场景方案
+        self.decor_enabled = bool(data.get("decor", False))
+        self.daynight_enabled = bool(data.get("daynight", True))
+        if isinstance(data.get("bait"), (int, float)):
+            self.bait_index = max(0, min(len(BAITS) - 1, int(data["bait"])))
+        if isinstance(data.get("dex"), dict):
+            self.dex = data["dex"]
+        if isinstance(data.get("hotkeys"), dict):
+            self.hotkeys = data["hotkeys"]
+        if isinstance(data.get("profiles"), list):
+            self.profiles = data["profiles"]
         if isinstance(data.get("max_fish"), (int, float)):
             self.max_fish = max(1, min(MAX_FISH_LIMIT, int(data["max_fish"])))
         return out or None
@@ -2677,6 +3011,9 @@ class App:
                     self.fish_info.hide()               # 离开鱼：仅挂一次延迟，不每帧重置（否则永不隐藏）
                 self.fish_info.update()                 # 跟随鱼重绘；延迟到期则真正隐藏
         self.floater_overlay.update(dt)                 # 繁殖提示等浮动文字（到期自动清除）
+        self._decor_t += dt
+        if self.decor is not None:
+            self.decor.update(dt)                       # 气泡/水草装饰层（开关关闭时自动清屏）
         self._save_ticks += 1
         if self._save_ticks >= 180:  # 约每 6 秒自动存一次位置
             self._save_ticks = 0
@@ -2704,6 +3041,8 @@ class App:
                      checked=lambda item: self.goldminer),
             TrayItem("允许挣脱", lambda icon, item: self._invoke(self.toggle_escape),
                      checked=lambda item: self.escape_enabled),
+            TrayItem("气泡装饰", lambda icon, item: self._invoke(self.toggle_decor),
+                     checked=lambda item: self.decor_enabled),
             TrayItem("鼠标穿透", lambda icon, item: self._invoke(self.toggle_mouse_penetration),
                      checked=lambda item: self.mouse_penetration),
             TrayItem("设置", lambda icon, item: self._invoke(self.open_settings)),
@@ -3017,6 +3356,206 @@ class App:
         self.escape_min = max(0.0, min(ESCAPE_RATE_MAX, v))
         self.save_config()
 
+    # ---------- 昼夜 / 装饰 ----------
+    def _update_tray_safe(self):
+        try:
+            self.tray.update_menu()
+        except Exception:
+            pass
+
+    def is_night(self):
+        """当前是否处于夜间时段（受昼夜开关控制；关闭则恒为白天）。"""
+        if not getattr(self, "daynight_enabled", True):
+            return False
+        h = time.localtime().tm_hour
+        a, b = NIGHT_HOURS
+        return h >= a or h < b
+
+    def toggle_decor(self):
+        self.decor_enabled = not self.decor_enabled
+        self.save_config()
+        self._update_tray_safe()
+
+    def toggle_daynight(self):
+        self.daynight_enabled = not self.daynight_enabled
+        self.save_config()
+        self._update_tray_safe()
+
+    # ---------- 养成：喂食 / 命名 ----------
+    def feed_fish(self, fish):
+        if fish in self.fishes:
+            fish.feed()
+            return True
+        return False
+
+    def rename_fish(self, fish, name):
+        if fish not in self.fishes:
+            return False
+        fish.custom_name = str(name).strip()[:16]
+        self.save_config()
+        return True
+
+    # ---------- 图鉴 ----------
+    def register_dex(self, fish, inc=True):
+        """把一条鱼登记进图鉴：累计出现次数、记录最高等级。
+        inc=False 用于加载存档时（只标记见过、更新最高等级，不累计次数、不落盘）。"""
+        key = os.path.basename(fish.species[1])
+        d = self.dex.setdefault(key, {"count": 0, "best": 1})
+        if inc:
+            d["count"] += 1
+            d["best"] = max(d.get("best", 1), fish.level)
+            self.save_config()
+        else:
+            d["best"] = max(d.get("best", 1), fish.level)
+
+    def dex_summary(self):
+        """图鉴汇总：已解锁数 / 总数，及每个品种条目。"""
+        rows = []
+        for label, path in self.species_list:
+            key = os.path.basename(path)
+            value = FISH_VALUE.get(key, (5, 0.25))[0]
+            info = self.dex.get(key)
+            rows.append({"key": key, "name": label, "value": value,
+                         "count": info["count"] if info else 0,
+                         "best": info["best"] if info else 0,
+                         "seen": bool(info)})
+        rows.sort(key=lambda r: (not r["seen"], r["value"]))
+        return {"unlocked": sum(1 for r in rows if r["seen"]),
+                "total": len(rows), "entries": rows}
+
+    # ---------- 钓鱼：鱼饵 ----------
+    def set_bait(self, idx):
+        self.bait_index = max(0, min(len(BAITS) - 1, int(idx)))
+        self.save_config()
+
+    # ---------- 场景方案 ----------
+    def save_profile(self, name):
+        name = str(name).strip()[:16] or "方案"
+        prof = {"name": name, "screen": self.screen, "max_fish": self.max_fish,
+                "fishing": self.fishing, "goldminer": self.goldminer}
+        self.profiles = [p for p in self.profiles if p.get("name") != name]
+        self.profiles.append(prof)
+        self.save_config()
+
+    def apply_profile(self, idx):
+        if not (0 <= idx < len(self.profiles)):
+            return False
+        p = self.profiles[idx]
+        self.set_screen(int(p.get("screen", -1)))
+        self.set_max_fish(int(p.get("max_fish", self.max_fish)))
+        if bool(p.get("fishing")) != self.fishing:
+            self.toggle_fishing()
+        if bool(p.get("goldminer")) != self.goldminer:
+            self.toggle_goldminer()
+        return True
+
+    def delete_profile(self, idx):
+        if 0 <= idx < len(self.profiles):
+            self.profiles.pop(idx)
+            self.save_config()
+            return True
+        return False
+
+    # ---------- 存档导出 / 导入 ----------
+    def export_save(self, path):
+        self.save_config()
+        try:
+            shutil.copyfile(CONFIG_PATH, path)
+            return True
+        except Exception:
+            return False
+
+    def import_save(self, path):
+        try:
+            with open(path, "r", encoding="utf-8") as fp:
+                json.load(fp)
+        except Exception:
+            return False
+        try:
+            shutil.copyfile(path, CONFIG_PATH)
+        except Exception:
+            return False
+        return True
+
+    # ---------- 全局快捷键 ----------
+    # 可绑定动作 -> 说明（仅这些动作可设快捷键）
+    HOTKEY_ACTIONS = {
+        "toggle_pause": "暂停/继续游动",
+        "feed_all": "喂食所有小鱼",
+        "toggle_decor": "气泡/水草装饰",
+        "toggle_sound": "音效开关",
+        "toggle_hide": "显示/隐藏小鱼",
+    }
+    _VK = {**{chr(0x41 + i): 0x41 + i for i in range(26)},
+           **{str(d): 0x30 + d for d in range(10)},
+           **{("f%d" % (i + 1)): 0x70 + i for i in range(12)}}
+
+    def _parse_combo(self, combo):
+        parts = str(combo).lower().replace(" ", "").split("+")
+        return set(parts[:-1]), self._VK.get(parts[-1])
+
+    def _combo_pressed(self, mods):
+        for name, vk in (("ctrl", 0x11), ("alt", 0x12), ("shift", 0x10)):
+            if (name in mods) != bool(user32.GetAsyncKeyState(vk) & 0x8000):
+                return False
+        return True
+
+    def set_hotkey(self, action, combo):
+        combo = str(combo).strip().lower().replace(" ", "")
+        if not combo:
+            self.hotkeys.pop(action, None)
+        else:
+            mods, vk = self._parse_combo(combo)
+            if vk is None:
+                return False
+            self.hotkeys[action] = combo
+        self.save_config()
+        return True
+
+    def _start_hotkeys(self):
+        self._hot_last = (None, 0.0)
+        try:
+            self._hot_cb = HOOKPROC(self._hotkey_proc)
+            self._hot_hook = user32.SetWindowsHookExW(
+                WH_KEYBOARD_LL, self._hot_cb, kernel32.GetModuleHandleW(None), 0)
+        except Exception:
+            self._hot_hook = None
+
+    def _hotkey_proc(self, nCode, wParam, lParam):
+        try:
+            if nCode == 0 and wParam == WM_KEYDOWN and self.hotkeys:
+                ks = KBDLLHOOKSTRUCT.from_address(lParam)
+                vk = ks.vkCode
+                now = time.monotonic()
+                last_vk, last_t = getattr(self, "_hot_last", (None, 0.0))
+                if not (vk == last_vk and now - last_t < 0.4):  # 忽略按住连发
+                    for action, combo in list(self.hotkeys.items()):
+                        mods, cvk = self._parse_combo(combo)
+                        if cvk == vk and self._combo_pressed(mods):
+                            self._hot_last = (vk, now)
+                            self.root.after(0, lambda a=action: self._run_hotkey(a))
+                            break
+        except Exception:
+            pass
+        return user32.CallNextHookEx(self._hot_hook if self._hot_hook else 0,
+                                     nCode, wParam, lParam)
+
+    def _run_hotkey(self, action):
+        fn = {"toggle_pause": self.toggle_pause, "feed_all": self._feed_all,
+              "toggle_decor": self.toggle_decor, "toggle_sound": self.toggle_sound,
+              "toggle_hide": self.toggle_hide}.get(action)
+        if fn:
+            try:
+                fn()
+            except Exception:
+                pass
+
+    def _feed_all(self):
+        for f in list(self.fishes):
+            f.feed()
+        if self.fishes:
+            self.save_config()
+
     # ---------- 鼠标穿透 ----------
     def _set_ex_style(self, hwnd, style, on):
         """给指定窗口句柄增/删某个扩展样式位（on=True 增，False 删）。"""
@@ -3079,6 +3618,14 @@ class App:
             pass
 
     # ---------- 菜单 ----------
+    def _rename_dialog(self, fish):
+        """弹框给鱼改名：取消返回 None、清空表示清除自定义名。"""
+        import tkinter.simpledialog as sd
+        name = sd.askstring("给小鱼起名", "输入名字（留空取消）：",
+                            initialvalue=fish.custom_name, parent=self.root)
+        if name is not None:
+            self.rename_fish(fish, name)
+
     def show_menu(self, fish, event):
         menu = tk.Menu(self.root, tearoff=0)
 
@@ -3093,6 +3640,10 @@ class App:
             sz_menu.add_command(label=label, command=lambda v=s: self.set_scale(fish, v))
         menu.add_cascade(label="大小", menu=sz_menu)
 
+        menu.add_separator()
+        menu.add_command(label="喂食", command=lambda: self.feed_fish(fish))
+        menu.add_command(label="改名字…",
+                         command=lambda: self._rename_dialog(fish))
         menu.add_separator()
         if fish.is_mature():
             menu.add_command(label="繁殖小鱼", command=lambda: self.breed_fish(fish))
@@ -3138,6 +3689,7 @@ class App:
             by = max(T, min(cy - h / 2, B - h))
             baby = Fish(self, parent.species, baby_scale, bx, by, level=1, growth=0.0)
             self.fishes.append(baby)
+            self.register_dex(baby)
             born += 1
         if born == 0:
             return None
@@ -3183,6 +3735,7 @@ class App:
             if y is None:
                 y = random.uniform(T + 50, max(T + 51, B - h))
         self.fishes.append(Fish(self, sp, scale, x, y))
+        self.register_dex(self.fishes[-1])
         self.save_config()
         return self.fishes[-1]
 
@@ -3196,10 +3749,11 @@ class App:
         return max(5, int(value * FISH_BUY_MULT))
 
     def fish_sell_price(self, fish):
-        """卖鱼返还：鱼基础价值 × 当前等级 × 比例。"""
+        """卖鱼返还：鱼基础价值 × 当前等级 × 进化倍率 × 比例。"""
         name = os.path.basename(fish.species[1])
         value = FISH_VALUE.get(name, (5, 0.25))[0]
-        return max(5, int(value * fish.level * FISH_SELL_RATE))
+        mul = getattr(fish, "evolution_value_mul", lambda: 1.0)()
+        return max(5, int(value * fish.level * mul * FISH_SELL_RATE))
 
     def _fish_info(self, fish):
         """返回鱼的基础价值与捕获率（与 FishingOverlay._fish_info 语义一致）。"""
@@ -3240,6 +3794,67 @@ class App:
         self.cannon_level -= 1
         self.save_config()
         return refund
+
+    # ---------- 市场（离线模拟行情 + 拍卖行） ----------
+    def _market_rng(self):
+        """按「年/年中第几天/6小时档」生成稳定随机源：每 6 小时行情与拍卖行刷新一次。"""
+        now = time.localtime()
+        bucket = (now.tm_year, now.tm_yday, now.tm_hour // 6)
+        seed = (bucket[0] * 1000 + bucket[1]) * 100 + bucket[2]
+        return random.Random(seed), bucket
+
+    def market_data(self):
+        rng, bucket = self._market_rng()
+        buy_rate = round(0.85 + rng.random() * 0.45, 2)   # 买入行情 0.85~1.30
+        sell_rate = round(0.85 + rng.random() * 0.45, 2)  # 卖出行情 0.85~1.30
+        n = len(self.species_list)
+        picks = rng.sample(range(n), min(4, n)) if n else []
+        listings = []
+        for i in picks:
+            name = os.path.basename(self.species_list[i][1])
+            base = self.fish_buy_price(name)
+            price = max(5, int(base * buy_rate * rng.uniform(0.7, 1.05)))
+            listings.append({"sp": i, "name": self.species_list[i][0],
+                             "price": price, "level": rng.randint(1, 3)})
+        return {"buy_rate": buy_rate, "sell_rate": sell_rate,
+                "listings": listings, "bucket": list(bucket)}
+
+    def market_buy(self, i):
+        md = self.market_data()
+        if not (0 <= i < len(md["listings"])):
+            return {"ok": False, "msg": "拍卖品不存在"}
+        item = md["listings"][i]
+        if len(self.fishes) >= self.max_fish:
+            return {"ok": False, "msg": "鱼池已满"}
+        if self.coins < item["price"]:
+            return {"ok": False, "msg": "金币不足"}
+        self.coins -= item["price"]
+        sp = self.species_list[item["sp"]]
+        f = self._spawn_fish(sp, charge=False)  # 已按市场价付费
+        if f is None:
+            self.coins += item["price"]
+            return {"ok": False, "msg": "放鱼失败"}
+        if item.get("level", 1) > 1:
+            f.level = item["level"]
+            f._apply_scale()
+        return {"ok": True, "msg": "已买入 %s（-%d）" % (item["name"], item["price"])}
+
+    def market_sell_all(self):
+        if not self.fishes:
+            return {"ok": False, "msg": "鱼池里还没有小鱼"}
+        md = self.market_data()
+        total = 0
+        n = len(self.fishes)
+        for f in list(self.fishes):
+            name = os.path.basename(f.species[1])
+            value = FISH_VALUE.get(name, (5, 0.25))[0]
+            mul = getattr(f, "evolution_value_mul", lambda: 1.0)()
+            total += max(1, int(value * f.level * mul * FISH_SELL_RATE
+                                * md["sell_rate"]))
+            self.remove_fish(f)
+        self.coins += total
+        self.save_config()
+        return {"ok": True, "msg": "清仓 %d 条，获得 %d 金币" % (n, total)}
 
     # ---------- 鱼信息浮层 ----------
     def show_fish_info(self, fish):
@@ -3295,6 +3910,17 @@ class App:
         try:
             if getattr(self, "floater_overlay", None) is not None:
                 self.floater_overlay.destroy()
+        except Exception:
+            pass
+        try:
+            if getattr(self, "decor", None) is not None:
+                self.decor.destroy()
+        except Exception:
+            pass
+        try:
+            if getattr(self, "_hot_hook", None):
+                user32.UnhookWindowsHookEx(self._hot_hook)
+                self._hot_hook = None
         except Exception:
             pass
         # 先关闭已打开的设置 / 商城窗口，避免退出时它们残留
@@ -3448,6 +4074,7 @@ class ShopAPI:
             "species": species,
             "fishes": fishes,
             "cannons": cannons,
+            "market": app.market_data(),
         }
 
     # ---------- 轻量状态（供前端定时轮询，避免每次重编码图片） ----------
@@ -3620,6 +4247,13 @@ class ShopAPI:
         self.app.set_cannon(int(idx))
         return {"ok": True, "msg": "已切换炮台"}
 
+    # ---------- 市场（行情 / 拍卖行 / 清仓） ----------
+    def market_buy(self, i):
+        return self._run_on_main(lambda: self.app.market_buy(int(i)))
+
+    def market_sell_all(self):
+        return self._run_on_main(self.app.market_sell_all)
+
 
 # ---------------------------------------------------------------- 设置 HTML 桥接
 def load_settings_html():
@@ -3678,6 +4312,16 @@ class SettingsAPI:
             "escape_enabled": app.escape_enabled,
             "cannon_index": app.cannon_index,
             "cannon_count": len(find_cannons()),
+            "decor_enabled": app.decor_enabled,
+            "daynight_enabled": app.daynight_enabled,
+            "is_night": app.is_night(),
+            "bait": app.bait_index,
+            "baits": [b[0] for b in BAITS],
+            "bait_cost": BAIT_COST,
+            "dex": app.dex_summary(),
+            "profiles": list(app.profiles),
+            "hotkeys": dict(app.hotkeys),
+            "hotkey_actions": dict(App.HOTKEY_ACTIONS),
         }
 
     # ---------- 写操作 ----------
@@ -3736,6 +4380,88 @@ class SettingsAPI:
             self.app.toggle_escape()
             return {"ok": True,
                     "msg": "已允许挣脱" if self.app.escape_enabled else "已关闭挣脱"}
+        return self._run_on_main(_t)
+
+    # ---------- 养成 / 图鉴 / 装饰 / 昼夜 / 鱼饵 / 场景 / 存档 ----------
+    def toggle_decor(self):
+        return self._run_on_main(lambda: self._toggle("toggle_decor"))
+
+    def toggle_daynight(self):
+        return self._run_on_main(lambda: self._toggle("toggle_daynight"))
+
+    def set_bait(self, idx):
+        def _t():
+            self.app.set_bait(int(idx))
+            return {"ok": True, "msg": "已选择%s" % BAITS[self.app.bait_index][0]}
+        return self._run_on_main(_t)
+
+    def feed_all(self):
+        def _t():
+            n = 0
+            for f in list(self.app.fishes):
+                f.feed()
+                n += 1
+            if n:
+                self.app.save_config()
+            return {"ok": n > 0,
+                    "msg": "已喂食 %d 条小鱼" % n if n else "鱼池里还没有小鱼"}
+        return self._run_on_main(_t)
+
+    def save_profile(self, name):
+        def _t():
+            self.app.save_profile(name)
+            return {"ok": True, "msg": "已保存场景方案「%s」" % str(name).strip()[:16]}
+        return self._run_on_main(_t)
+
+    def apply_profile(self, idx):
+        def _t():
+            ok = self.app.apply_profile(int(idx))
+            return {"ok": ok, "msg": "已切换场景方案" if ok else "方案不存在"}
+        return self._run_on_main(_t)
+
+    def delete_profile(self, idx):
+        def _t():
+            self.app.delete_profile(int(idx))
+            return {"ok": True, "msg": "已删除场景方案"}
+        return self._run_on_main(_t)
+
+    def export_save(self):
+        def _t():
+            import tkinter.filedialog as fd
+            path = fd.asksaveasfilename(
+                parent=self.app.root, title="导出存档",
+                defaultextension=".json", initialfile="desktop_fish_pet_save.json",
+                filetypes=[("存档文件", "*.json")])
+            if not path:
+                return {"ok": False, "msg": "已取消导出"}
+            ok = self.app.export_save(path)
+            return {"ok": ok, "msg": "已导出到：%s" % path if ok else "导出失败"}
+        return self._run_on_main(_t)
+
+    def import_save(self):
+        def _t():
+            import tkinter.filedialog as fd
+            path = fd.askopenfilename(
+                parent=self.app.root, title="导入存档",
+                filetypes=[("存档文件", "*.json")])
+            if not path:
+                return {"ok": False, "msg": "已取消导入"}
+            ok = self.app.import_save(path)
+            return {"ok": ok,
+                    "msg": "导入成功，重启后生效" if ok else "导入失败：文件不是有效存档"}
+        return self._run_on_main(_t)
+
+    def set_hotkey(self, action, combo):
+        def _t():
+            if action not in App.HOTKEY_ACTIONS:
+                return {"ok": False, "msg": "未知动作"}
+            ok = self.app.set_hotkey(action, combo)
+            if ok:
+                cur = self.app.hotkeys.get(action, "")
+                return {"ok": True,
+                        "msg": ("%s 已绑定 %s" % (App.HOTKEY_ACTIONS[action], cur))
+                        if cur else ("%s 已清除快捷键" % App.HOTKEY_ACTIONS[action])}
+            return {"ok": False, "msg": "按键无效，请用如 ctrl+alt+p / f2"}
         return self._run_on_main(_t)
 
     def set_cannon(self, idx):

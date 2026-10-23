@@ -40,6 +40,17 @@
   .chip.sel{background:var(--gold);color:var(--gold-ink);}
   .chip.sel-cannon{outline:3px solid var(--gold);}
   .mfhl{border-color:var(--gold)!important;background:#fffbe6;box-shadow:0 0 0 2px rgba(242,201,76,.3);}
+  .dexrow{display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:8px;
+    background:#f3f7ff;margin-bottom:6px;font-size:13px;}
+  .dexrow .nm{flex:1;font-weight:600;}
+  .dexrow .meta{font-size:12px;color:#5b7099;}
+  .dexrow.locked{opacity:.5;}
+  .rar{font-size:11px;padding:1px 6px;border-radius:6px;color:#fff;font-weight:700;}
+  .hkrow,.profrow{display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:8px;
+    background:#f3f7ff;margin-bottom:6px;}
+  .hkrow .nm,.profrow .nm{flex:1;font-weight:600;font-size:13px;}
+  .hkrow input{width:120px;padding:5px 8px;border-radius:8px;border:1px solid #cdd8ee;}
+  .profrow .meta{font-size:12px;color:#5b7099;}
   .btn{border:none;border-radius:10px;padding:9px 16px;cursor:pointer;font-weight:600;
     color:#fff;background:var(--blue);transition:filter .15s;margin-right:8px;}
   .btn:hover{filter:brightness(1.08);}
@@ -77,6 +88,33 @@
     <div class="box"><h3>鱼池管理</h3>
       <button class="btn" onclick="doAdd()">放一条小鱼</button>
       <button class="btn" onclick="doAddRandom()">随机放几条鱼</button>
+      <button class="btn" onclick="doFeedAll()">喂食所有小鱼</button>
+    </div>
+    <div class="box"><h3>钓鱼增强 · 鱼饵</h3>
+      <div class="hint" style="margin-bottom:8px;">鱼饵影响钓鱼挣脱概率与收益：稀有鱼饵更稳、收益更高，每次放钩消耗 <b id="baitCost"></b> 金币；连续不失手有连击奖励。</div>
+      <div class="chips" id="baits"></div>
+    </div>
+    <div class="box"><h3>图鉴</h3>
+      <div class="hint" id="dexSummary" style="margin-bottom:8px;"></div>
+      <div id="dexList"></div>
+    </div>
+    <div class="box"><h3>场景方案</h3>
+      <div class="hint" style="margin-bottom:8px;">把当前「屏幕 / 鱼池上限 / 玩法模式」存为一套方案，一键切换。</div>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:10px;">
+        <input id="profName" placeholder="方案名，如：办公 / 娱乐"
+               style="flex:1;min-width:140px;padding:6px 8px;border-radius:8px;border:1px solid #cdd8ee;">
+        <button class="btn" onclick="doSaveProfile()">保存当前为方案</button>
+      </div>
+      <div id="profList"></div>
+    </div>
+    <div class="box"><h3>快捷键</h3>
+      <div class="hint" style="margin-bottom:8px;">全局快捷键，格式如 <b>ctrl+alt+p</b>、<b>f2</b>；留空并保存即清除。支持 a-z、0-9、f1-f12 与 ctrl/alt/shift 组合。</div>
+      <div id="hotkeys"></div>
+    </div>
+    <div class="box"><h3>存档</h3>
+      <div class="hint" style="margin-bottom:8px;">导出 / 导入配置（含鱼池、养成、图鉴、设置）。导入后重启生效。</div>
+      <button class="btn" onclick="doExport()">导出存档</button>
+      <button class="btn" onclick="doImport()">导入存档</button>
     </div>
     <button class="btn quit" onclick="doQuit()">退出程序</button>
   </div>
@@ -94,6 +132,8 @@
     {key:'autostart',      label:'开机自启', api:'toggle_autostart'},
     {key:'mouse_penetration', label:'鼠标穿透', api:'toggle_mouse_penetration'},
     {key:'berserk_enabled',label:'狂暴模式', api:'toggle_berserk'},
+    {key:'decor_enabled',  label:'气泡装饰', api:'toggle_decor'},
+    {key:'daynight_enabled',label:'昼夜节律', api:'toggle_daynight'},
   ];
 
   function toast(msg){
@@ -248,14 +288,104 @@
     const inp = document.getElementById('mfCustom');
     inp.value = DATA.max_fish;
     document.getElementById('mfHint').textContent = '当前上限：' + DATA.max_fish + ' 条';
+    // 鱼饵
+    document.getElementById('baitCost').textContent = DATA.bait_cost;
+    const ba = document.getElementById('baits');
+    ba.innerHTML = '';
+    (DATA.baits || []).forEach((nm, i) => {
+      const b = document.createElement('button');
+      b.className = 'chip' + (i === DATA.bait ? ' sel' : '');
+      b.textContent = nm + (i > 0 ? '（' + DATA.bait_cost + '金/钩）' : '');
+      b.onclick = () => callApi('set_bait', i);
+      ba.appendChild(b);
+    });
+    renderDex();
+    renderProfiles();
+    renderHotkeys();
   }
 
-  async function callApi(method, arg){
+  function _rarity(v){
+    if (v >= 12) return {t:'传说', c:'#c0392b'};
+    if (v >= 8) return {t:'史诗', c:'#8e44ad'};
+    if (v >= 5) return {t:'稀有', c:'#2980b9'};
+    return {t:'常见', c:'#7f8c8d'};
+  }
+  function renderDex(){
+    const d = DATA.dex || {unlocked:0, total:0, entries:[]};
+    document.getElementById('dexSummary').textContent =
+      '已解锁 ' + d.unlocked + ' / ' + d.total + ' 种';
+    const box = document.getElementById('dexList');
+    box.innerHTML = '';
+    (d.entries || []).forEach(e => {
+      const row = document.createElement('div');
+      row.className = 'dexrow' + (e.seen ? '' : ' locked');
+      const r = _rarity(e.value);
+      const rar = document.createElement('span');
+      rar.className = 'rar'; rar.style.background = r.c; rar.textContent = r.t;
+      const nm = document.createElement('span'); nm.className = 'nm';
+      nm.textContent = e.seen ? e.name : '？？？';
+      const meta = document.createElement('span'); meta.className = 'meta';
+      meta.textContent = e.seen
+        ? ('价值 ' + e.value + ' · 见过 ' + e.count + ' 次 · 最高 Lv' + e.best)
+        : ('价值 ' + e.value + ' · 未解锁');
+      row.appendChild(rar); row.appendChild(nm); row.appendChild(meta);
+      box.appendChild(row);
+    });
+  }
+
+  function renderProfiles(){
+    const box = document.getElementById('profList');
+    box.innerHTML = '';
+    const list = DATA.profiles || [];
+    if (!list.length){
+      box.innerHTML = '<div class="hint">还没有保存的方案</div>';
+      return;
+    }
+    list.forEach((p, i) => {
+      const row = document.createElement('div'); row.className = 'profrow';
+      const nm = document.createElement('span'); nm.className = 'nm';
+      nm.textContent = p.name;
+      const meta = document.createElement('span'); meta.className = 'meta';
+      const scr = p.screen < 0 ? '全部屏幕' : ('显示器' + p.screen);
+      const mode = p.fishing ? '捕鱼' : (p.goldminer ? '钓鱼' : '普通');
+      meta.textContent = scr + ' · ' + p.max_fish + '条 · ' + mode;
+      const ap = document.createElement('button'); ap.className = 'btn';
+      ap.textContent = '应用'; ap.onclick = () => callApi('apply_profile', i);
+      const del = document.createElement('button'); del.className = 'btn';
+      del.style.background = '#9bb0d0'; del.textContent = '删除';
+      del.onclick = () => callApi('delete_profile', i);
+      row.appendChild(nm); row.appendChild(meta); row.appendChild(ap); row.appendChild(del);
+      box.appendChild(row);
+    });
+  }
+
+  function renderHotkeys(){
+    const box = document.getElementById('hotkeys');
+    box.innerHTML = '';
+    const acts = DATA.hotkey_actions || {};
+    const cur = DATA.hotkeys || {};
+    Object.keys(acts).forEach(action => {
+      const row = document.createElement('div'); row.className = 'hkrow';
+      const nm = document.createElement('span'); nm.className = 'nm';
+      nm.textContent = acts[action];
+      const inp = document.createElement('input');
+      inp.value = cur[action] || '';
+      inp.placeholder = '如 ctrl+alt+p';
+      const save = document.createElement('button'); save.className = 'btn';
+      save.textContent = '保存';
+      save.onclick = () => callApi('set_hotkey', action, inp.value);
+      inp.addEventListener('keydown', e => { if (e.key === 'Enter') save.onclick(); });
+      row.appendChild(nm); row.appendChild(inp); row.appendChild(save);
+      box.appendChild(row);
+    });
+  }
+
+  async function callApi(method, ...args){
     try{
       const api = window.pywebview.api;
-      const r = arg === undefined
-        ? await api[method]()
-        : await api[method](arg);
+      const r = args.length
+        ? await api[method](...args)
+        : await api[method]();
       if (r && r.msg) toast(r.msg);
       if (!r || r.ok !== false) refreshSettings(true);
     }catch(e){ toast('操作失败：' + e); }
@@ -271,6 +401,14 @@
   }
   async function doAdd(){ await callApi('add_fish'); }
   async function doAddRandom(){ await callApi('add_fish_random'); }
+  async function doFeedAll(){ await callApi('feed_all'); }
+  async function doExport(){ await callApi('export_save'); }
+  async function doImport(){ await callApi('import_save'); }
+  async function doSaveProfile(){
+    const nm = document.getElementById('profName').value.trim();
+    if (!nm) { toast('请输入方案名'); return; }
+    await callApi('save_profile', nm);
+  }
   async function doQuit(){ await callApi('quit'); }
 
   window.addEventListener('pywebviewready', () => refreshSettings(true));

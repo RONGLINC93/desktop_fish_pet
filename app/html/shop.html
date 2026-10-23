@@ -646,6 +646,9 @@
         <div class="cat" data-cat="cannon" onclick="switchCat('cannon')">
           <span class="ic">💥</span>炮台
         </div>
+        <div class="cat" data-cat="market" onclick="switchCat('market')">
+          <span class="ic">🏪</span>市场
+        </div>
 
       </nav>
 
@@ -671,6 +674,15 @@
         <div id="cat-cannon" class="cannon" style="display:none;">
           <div class="cannon-card" id="cannonCard"></div>
           <div class="cannon-models" id="cannonModels"></div>
+        </div>
+
+        <!-- 市场：行情 + 拍卖行 + 清仓 -->
+        <div id="cat-market" class="cannon" style="display:none;flex-direction:column;flex:1;min-height:0;overflow:auto;">
+          <div class="cannon-card" id="marketCard"></div>
+          <div style="padding:0 4px 8px;">
+            <div class="big" style="margin:6px 0;">拍卖行（每 6 小时刷新）</div>
+            <div class="grid" id="marketGrid"></div>
+          </div>
         </div>
       </div>
     </div>
@@ -738,6 +750,7 @@
         b.classList.toggle('active', b.dataset.cat === cat));
       document.getElementById('cat-fish').style.display = cat === 'fish' ? 'flex' : 'none';
       document.getElementById('cat-cannon').style.display = cat === 'cannon' ? 'flex' : 'none';
+      document.getElementById('cat-market').style.display = cat === 'market' ? 'flex' : 'none';
       if (DATA) render();
     }
 
@@ -838,7 +851,57 @@
 
     function render() {
       if (!DATA) return;
-      if (CUR_CAT === 'fish') renderFish(); else renderCannon();
+      if (CUR_CAT === 'fish') renderFish();
+      else if (CUR_CAT === 'cannon') renderCannon();
+      else renderMarket();
+    }
+
+    /* 市场：今日行情 + 拍卖行 + 一键清仓 */
+    function renderMarket() {
+      const m = DATA.market || {buy_rate:1, sell_rate:1, listings:[]};
+      const up = m.buy_rate >= 1, upS = m.sell_rate >= 1;
+      const card = document.getElementById('marketCard');
+      let h = '<div class="big">今日行情</div>';
+      h += '<div class="sub">买入价 ×' + m.buy_rate + '　卖出价 ×' + m.sell_rate +
+        '　（每 6 小时随行情波动）</div>';
+      h += '<div class="refund">市场买入按行情上浮/下浮；拍卖行常有折扣，盯紧好价再出手。</div>';
+      h += '<div class="btn" style="background:linear-gradient(180deg,#e08a4a,#b35a1e)" ' +
+        'onclick="doMarketSellAll()">一键清仓（按卖出行情出售全部小鱼）</div>';
+      card.innerHTML = h;
+
+      const grid = document.getElementById('marketGrid');
+      const full = DATA.fish_count >= DATA.max_fish;
+      let html = '';
+      if (!m.listings.length) {
+        grid.innerHTML = '<div class="empty">拍卖行暂无商品</div>';
+        return;
+      }
+      m.listings.forEach((it, i) => {
+        const s = DATA.species[it.sp];
+        const thumb = s && s.gif
+          ? '<img src="' + s.gif + '" alt="' + esc(it.name) + '">'
+          : '<span class="emo">🐟</span>';
+        const btn = full
+          ? '<div class="btn gold disabled">鱼池已满</div>'
+          : '<div class="btn gold" onclick="doMarketBuy(' + i + ')">竞 价</div>';
+        html += slot(thumb, it.name, 'Lv' + it.level, it.price, btn, false);
+      });
+      grid.innerHTML = html;
+    }
+
+    async function doMarketBuy(i) {
+      try {
+        const r = await window.pywebview.api.market_buy(i);
+        if (r && r.msg) toast(r.msg);
+        if (!r || r.ok !== false) refreshShop(true);
+      } catch (e) { toast('操作失败：' + e); }
+    }
+    async function doMarketSellAll() {
+      try {
+        const r = await window.pywebview.api.market_sell_all();
+        if (r && r.msg) toast(r.msg);
+        if (!r || r.ok !== false) refreshShop(true);
+      } catch (e) { toast('操作失败：' + e); }
     }
 
     /* 物品格子：缩略图 + 名称 + 金币价 + 按钮 */
