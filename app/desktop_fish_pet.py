@@ -2237,7 +2237,10 @@ class GoldMinerOverlay:
         self._render()
 
     def _escape_rate(self, fish):
-        """收线时该鱼的挣脱概率（每秒）：按价值计算，且不低于设置的最低概率。"""
+        """收线时该鱼的挣脱概率（每秒）：按价值计算，且不低于设置的最低概率。
+        「允许挣脱」总开关关闭时直接返回 0，鱼稳稳上钩不会逃走。"""
+        if not getattr(self.app, "escape_enabled", True):
+            return 0.0
         value, _ = self._fish_info(fish)
         rate = min(ESCAPE_RATE_MAX,
                    ESCAPE_RATE_BASE * (1.0 + value / ESCAPE_VALUE_SCALE))
@@ -2372,7 +2375,9 @@ class GoldMinerOverlay:
                                     outline=(120, 150, 200, 220), width=2)
         self._hud_text(x0 + 16, y0 + 11, "金币：%d" % self.app.coins,
                        (255, 222, 120, 255), font)
-        self._hud_text(x0 + 16, y0 + 35, "空格放钩 · 鱼会挣脱",
+        self._hud_text(x0 + 16, y0 + 35,
+                       "空格放钩 · 鱼会挣脱" if self.app.escape_enabled
+                       else "空格放钩 · 鱼跑不掉",
                        (205, 235, 255, 255), font)
 
     def _hud_text(self, x, y, text, fill, font):
@@ -2515,6 +2520,7 @@ class App:
         self.cross_screen = True  # 跨屏游走开关（screen==-1 时为真）；load_config 可能覆盖
         self.screen = -1  # 鱼游走的屏幕：-1=全部屏幕（虚拟桌面），0..n-1=指定显示器；load_config 可能覆盖
         self.escape_min = 0.0  # 钓鱼模式最低挣脱概率（每秒）：小鱼保底；0=按价值公式；load_config 可能覆盖
+        self.escape_enabled = True  # 钓鱼模式「允许挣脱」总开关：关掉后收线必中，鱼绝不逃走；load_config 可能覆盖
         self.mouse_penetration = False  # 鼠标穿透：整窗点击穿透到桌面；load_config 可能覆盖
         self.max_fish = MAX_FISH  # 鱼数量上限；load_config 可能覆盖
         self._save_ticks = 0
@@ -2566,6 +2572,7 @@ class App:
                 "cross_screen": self.cross_screen, "screen": self.screen,
                 "mouse_penetration": self.mouse_penetration,
                 "escape_min": self.escape_min,
+                "escape": self.escape_enabled,
                 "max_fish": self.max_fish}
         for f in self.fishes:
             rel = os.path.relpath(f.species[1], FISH_ROOT)
@@ -2625,6 +2632,7 @@ class App:
             except (TypeError, ValueError):
                 em = 0.0
             self.escape_min = max(0.0, min(ESCAPE_RATE_MAX, em))
+        self.escape_enabled = bool(data.get("escape", True))
         if isinstance(data.get("max_fish"), (int, float)):
             self.max_fish = max(1, min(MAX_FISH_LIMIT, int(data["max_fish"])))
         return out or None
@@ -2694,6 +2702,8 @@ class App:
                      checked=lambda item: self.fishing),
             TrayItem("钓鱼模式", lambda icon, item: self._invoke(self.toggle_goldminer),
                      checked=lambda item: self.goldminer),
+            TrayItem("允许挣脱", lambda icon, item: self._invoke(self.toggle_escape),
+                     checked=lambda item: self.escape_enabled),
             TrayItem("鼠标穿透", lambda icon, item: self._invoke(self.toggle_mouse_penetration),
                      checked=lambda item: self.mouse_penetration),
             TrayItem("设置", lambda icon, item: self._invoke(self.open_settings)),
@@ -2874,6 +2884,15 @@ class App:
             for f in self.fishes:
                 f.berserk = False
                 f.berserk_t = 0.0
+        self.save_config()
+        try:
+            self.tray.update_menu()
+        except Exception:
+            pass
+
+    def toggle_escape(self):
+        """钓鱼模式「允许挣脱」总开关：关闭后收线时鱼绝不逃走（收线必中）。"""
+        self.escape_enabled = not self.escape_enabled
         self.save_config()
         try:
             self.tray.update_menu()
@@ -3656,6 +3675,7 @@ class SettingsAPI:
             "berserk_enabled": app.berserk_enabled,
             "escape_min": app.escape_min,
             "escape_min_choices": list(ESCAPE_MIN_CHOICES),
+            "escape_enabled": app.escape_enabled,
             "cannon_index": app.cannon_index,
             "cannon_count": len(find_cannons()),
         }
@@ -3709,6 +3729,13 @@ class SettingsAPI:
             self.app.set_escape_min(float(v))
             pct = "%.0f%%" % (float(v) * 100)
             return {"ok": True, "msg": "最低挣脱概率已设为 %s/秒" % pct}
+        return self._run_on_main(_t)
+
+    def toggle_escape(self):
+        def _t():
+            self.app.toggle_escape()
+            return {"ok": True,
+                    "msg": "已允许挣脱" if self.app.escape_enabled else "已关闭挣脱"}
         return self._run_on_main(_t)
 
     def set_cannon(self, idx):

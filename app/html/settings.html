@@ -66,12 +66,12 @@
       <div class="hint" style="margin-bottom:8px;">选择小鱼游走的屏幕，「全部屏幕」可跨显示器游走；捕鱼炮台与钓鱼钩也会停靠在选定屏幕。</div>
       <div class="chips" id="screens"></div>
     </div>
-    <div class="box"><h3>鱼池上限</h3><div class="chips" id="maxfish"></div>
-      <div style="margin-top:10px;display:flex;gap:8px;align-items:center;">
-        <span class="hint">自定义</span>
+    <div class="box"><h3>鱼池上限</h3>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
         <input id="mfCustom" type="number" min="1" max="100" placeholder="1~100"
                style="width:88px;padding:6px 8px;border-radius:8px;border:1px solid #cdd8ee;">
         <button class="btn" onclick="doMaxFishCustom()">应用</button>
+        <span class="hint" id="mfHint"></span>
       </div>
     </div>
     <div class="box"><h3>鱼池管理</h3>
@@ -149,13 +149,33 @@
     return box;
   }
 
-  // 钓鱼模式二级设置行：最低挣脱概率（每秒），缩进挂在「钓鱼模式」开关下
+  // 钓鱼模式二级设置行：允许挣脱总开关 + 最低挣脱概率（每秒），缩进挂在「钓鱼模式」开关下
   function buildEscapeMinRow(){
     const box = document.createElement('div');
     box.style.cssText = 'margin:0 10px 8px;padding:8px 10px;background:#f8fbff;' +
       'border-left:3px solid #e3ebf9;border-radius:0 10px 10px 0;';
+    // └ 允许挣脱：总开关，关闭后收线必中、鱼绝不逃走
+    const tgRow = document.createElement('div');
+    tgRow.style.cssText = 'display:flex;align-items:center;justify-content:space-between;';
+    const tgName = document.createElement('span');
+    tgName.style.cssText = 'font-weight:600;font-size:13px;';
+    tgName.textContent = '└ 允许挣脱';
+    const tgBtn = document.createElement('button');
+    tgBtn.className = 'tg ' + (DATA.escape_enabled ? 'on' : '');
+    tgBtn.textContent = DATA.escape_enabled ? '开' : '关';
+    tgBtn.onclick = () => callApi('toggle_escape');
+    tgRow.appendChild(tgName); tgRow.appendChild(tgBtn);
+    box.appendChild(tgRow);
+    if (!DATA.escape_enabled){
+      const off = document.createElement('div');
+      off.className = 'hint';
+      off.style.cssText = 'margin-top:4px;';
+      off.textContent = '已关闭：收线时鱼稳稳上钩，不会逃走';
+      box.appendChild(off);
+      return box;
+    }
     const head = document.createElement('div');
-    head.style.cssText = 'display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;margin-bottom:6px;';
+    head.style.cssText = 'display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;margin:6px 0;';
     const t = document.createElement('span');
     t.style.cssText = 'font-weight:600;font-size:13px;';
     t.textContent = '└ 最低挣脱概率（每秒）';
@@ -224,27 +244,10 @@
       b.onclick = () => callApi('set_screen', m.index);
       sc.appendChild(b);
     });
-    // 鱼池上限
-    const mf = document.getElementById('maxfish');
-    mf.innerHTML = '';
-    const custom = !DATA.max_fish_choices.includes(DATA.max_fish);
-    DATA.max_fish_choices.forEach(n => {
-      const b = document.createElement('button');
-      b.className = 'chip' + (n === DATA.max_fish ? ' sel' : '');
-      b.textContent = n + ' 条';
-      b.onclick = () => callApi('set_max_fish', n);
-      mf.appendChild(b);
-    });
-    if (custom){
-      const cb = document.createElement('button');
-      cb.className = 'chip sel';
-      cb.textContent = '自定义 ' + DATA.max_fish + ' 条';
-      cb.onclick = () => document.getElementById('mfCustom').focus();
-      mf.appendChild(cb);
-    }
+    // 鱼池上限（仅自定义输入，不再提供快速选择）
     const inp = document.getElementById('mfCustom');
     inp.value = DATA.max_fish;
-    inp.classList.toggle('mfhl', custom);
+    document.getElementById('mfHint').textContent = '当前上限：' + DATA.max_fish + ' 条';
   }
 
   async function callApi(method, arg){
