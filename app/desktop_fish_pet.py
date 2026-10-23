@@ -1319,56 +1319,92 @@ class FloaterOverlay:
 # ---------------------------------------------------------------- 装饰叠加层
 class DecorOverlay:
     """鼠标穿透的装饰层：从底部升起的气泡 + 底部摇曳水草。
-    纯装饰、不参与交互；开关关闭时保持空白、不重绘。"""
+    纯装饰、不参与交互；开关关闭时保持空白、不重绘。
+    每个显示器一个独立窗口（pane）：「全部屏幕」时每块屏各建一个、气泡铺满所有屏；
+    选定某屏时只在该屏出现。避免单个跨虚拟桌面窗口在原点非(0,0)或分辨率不一致时
+    渲染不到部分显示器的问题。"""
 
     def __init__(self, app):
         self.app = app
-        L = user32.GetSystemMetrics(SM_XVIRTUALSCREEN)
-        T = user32.GetSystemMetrics(SM_YVIRTUALSCREEN)
-        W = user32.GetSystemMetrics(SM_CXVIRTUALSCREEN)
-        H = user32.GetSystemMetrics(SM_CYVIRTUALSCREEN)
-        if not (W > 0 and H > 0):
-            L, T, R, B = app.workarea
-            W, H = R - L, B - T
-        self.L, self.T, self.W, self.H = L, T, W, H
-
-        self.win = tk.Toplevel(app.root)
-        self.win.overrideredirect(True)
-        self.win.attributes("-topmost", True)
-        self.win.attributes("-disabled", True)
-        self.win.configure(bg="black")
-        self.win.geometry("%dx%d+%d+%d" % (W, H, L, T))
-        self.win.update_idletasks()
-
-        self.hwnd = user32.GetAncestor(self.win.winfo_id(), GA_ROOT)
-        ex = user32.GetWindowLongPtrW(self.hwnd, GWL_EXSTYLE)
-        ex |= WS_EX_LAYERED | WS_EX_TOOLWINDOW | WS_EX_TRANSPARENT  # 整窗鼠标穿透
-        user32.SetWindowLongPtrW(self.hwnd, GWL_EXSTYLE, ex)
-
-        self.hdc_screen = user32.GetDC(0)
-        self.hdc_mem = gdi32.CreateCompatibleDC(self.hdc_screen)
-        self.hbm = None
-        self.old_hbm = None
-        self.bits = None
-        self._make_dib(W, H)
-        self.img = Image.new("RGBA", (W, H), (0, 0, 0, 0))
-        self.draw = ImageDraw.Draw(self.img)
+        self.panes = []            # 每个显示器一个独立窗口（pane）
+        self._sig = None           # 当前覆盖的显示器签名（用于判断是否需要重建）
+        self._cfg = ("__init__",)  # 上次的 cross_screen / screen 配置
         self._active = False
-        # 气泡与水草状态
-        self.bubbles = []
-        self._spawn_cd = 0.0
-        self.weeds = []
-        for i in range(max(6, W // 140)):
-            self.weeds.append({"x": random.uniform(0, W),
-                               "h": random.uniform(70, 190),
-                               "ph": random.uniform(0, 6.28),
-                               "sw": random.uniform(0.5, 1.1)})
+        self._rebuild_if_needed(force=True)
         self._blank()
 
-    def _make_dib(self, w, h):
-        if getattr(self, "hbm", None):
-            gdi32.SelectObject(self.hdc_mem, self.old_hbm)
-            gdi32.DeleteObject(self.hbm)
+    # ---------- 显示器覆盖决策 ----------
+    def _target_rects(self):
+        """当前模式下应覆盖的显示器工作区矩形（屏幕绝对坐标）。"""
+        mons = get_monitors()
+        if not mons:
+            L, T, R, B = self.app.workarea
+            return [(L, T, R, B)]
+        if self.app.cross_screen:
+            return [m["work"] for m in mons]   # 全部屏幕：每个显示器各一个 pane
+        for m in mons:
+            if m["index"] == self.app.screen:
+                return [m["work"]]             # 选定屏：只覆盖该显示器
+        return [mons[0]["work"]]
+
+    @staticmethod
+    def _sig_of(rects):
+        return "|".join("%d,%d,%d,%d" % (L, T, R, B) for (L, T, R, B) in rects)
+
+    def _rebuild_if_needed(self, force=False):
+        cfg = (self.app.cross_screen, self.app.screen)
+        if not force and cfg == self._cfg:
+            return
+        self._cfg = cfg
+        rects = self._target_rects()
+        sig = self._sig_of(rects)
+        if not force and sig == self._sig:
+            return
+        self._sig = sig
+        self._destroy_panes()
+        self.panes = []
+        for (L, T, R, B) in rects:
+            self.panes.append(self._create_pane(L, T, R - L, B - T))
+
+    # ---------- 单个 pane（一个显示器窗口） ----------
+    @staticmethod
+    def _make_weeds(W):
+        weeds = []
+        for i in range(max(6, W // 140)):
+            weeds.append({"x": random.uniform(0, W),
+                          "h": random.uniform(70, 190),
+                          "ph": random.uniform(0, 6.28),
+                          "sw": random.uniform(0.5, 1.1)})
+        return weeds
+
+    def _create_pane(self, L, T, W, H):
+        win = tk.Toplevel(self.app.root)
+        win.overrideredirect(True)
+        win.attributes("-topmost", True)
+        win.attributes("-disabled", True)
+        win.configure(bg="black")
+        win.geometry("%dx%d+%d+%d" % (W, H, L, T))
+        win.update_idletasks()
+        hwnd = user32.GetAncestor(win.winfo_id(), GA_ROOT)
+        ex = user32.GetWindowLongPtrW(hwnd, GWL_EXSTYLE)
+        ex |= WS_EX_LAYERED | WS_EX_TOOLWINDOW | WS_EX_TRANSPARENT  # 整窗鼠标穿透
+        user32.SetWindowLongPtrW(hwnd, GWL_EXSTYLE, ex)
+        hdc_screen = user32.GetDC(0)
+        hdc_mem = gdi32.CreateCompatibleDC(hdc_screen)
+        pane = {
+            "win": win, "hwnd": hwnd, "hdc_screen": hdc_screen, "hdc_mem": hdc_mem,
+            "hbm": None, "old_hbm": None, "bits": None,
+            "L": L, "T": T, "W": W, "H": H,
+            "img": None, "draw": None,
+            "bubbles": [], "weeds": self._make_weeds(W), "_cd": 0.0,
+        }
+        self._make_dib(pane, W, H)
+        return pane
+
+    def _make_dib(self, pane, w, h):
+        if pane["hbm"]:
+            gdi32.SelectObject(pane["hdc_mem"], pane["old_hbm"])
+            gdi32.DeleteObject(pane["hbm"])
         bi = BITMAPINFO()
         bi.bmiHeader.biSize = ctypes.sizeof(BITMAPINFOHEADER)
         bi.bmiHeader.biWidth = w
@@ -1377,85 +1413,101 @@ class DecorOverlay:
         bi.bmiHeader.biBitCount = 32
         bi.bmiHeader.biCompression = 0  # BI_RGB
         bits = ctypes.c_void_p()
-        self.hbm = gdi32.CreateDIBSection(self.hdc_screen, ctypes.byref(bi), 0,
-                                          ctypes.byref(bits), None, 0)
-        self.bits = bits
-        self.old_hbm = gdi32.SelectObject(self.hdc_mem, self.hbm)
-        self.dib_size = (w, h)
+        pane["hbm"] = gdi32.CreateDIBSection(pane["hdc_screen"], ctypes.byref(bi), 0,
+                                             ctypes.byref(bits), None, 0)
+        pane["bits"] = bits
+        pane["old_hbm"] = gdi32.SelectObject(pane["hdc_mem"], pane["hbm"])
+        pane["img"] = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+        pane["draw"] = ImageDraw.Draw(pane["img"])
 
-    def _push(self):
-        r, g, b, a = self.img.split()
+    def _push_pane(self, pane):
+        r, g, b, a = pane["img"].split()
         bgra = Image.merge("RGBA", (b, g, r, a)).tobytes()
-        ctypes.memmove(self.bits, bgra, self.W * self.H * 4)
+        ctypes.memmove(pane["bits"], bgra, pane["W"] * pane["H"] * 4)
         blend = BLENDFUNCTION(0, 0, 255, 1)
-        dst = POINT(int(self.L), int(self.T))
-        sz = SIZE(self.W, self.H)
+        dst = POINT(int(pane["L"]), int(pane["T"]))
+        sz = SIZE(pane["W"], pane["H"])
         src = POINT(0, 0)
-        user32.UpdateLayeredWindow(self.hwnd, self.hdc_screen, ctypes.byref(dst),
-                                   ctypes.byref(sz), self.hdc_mem, ctypes.byref(src),
+        user32.UpdateLayeredWindow(pane["hwnd"], pane["hdc_screen"], ctypes.byref(dst),
+                                   ctypes.byref(sz), pane["hdc_mem"], ctypes.byref(src),
                                    0, ctypes.byref(blend), ULW_ALPHA)
 
+    def _blank_pane(self, pane):
+        pane["img"].paste((0, 0, 0, 0), [0, 0, pane["W"], pane["H"]])
+        self._push_pane(pane)
+
     def _blank(self):
-        self.img.paste((0, 0, 0, 0), [0, 0, self.W, self.H])
-        self._push()
+        for p in self.panes:
+            self._blank_pane(p)
         self._active = False
 
-    def update(self, dt):
-        if not getattr(self.app, "decor_enabled", False):
-            if self._active:
-                self._blank()
-            return
-        # 生成气泡（间隔、上限控制）
-        self._spawn_cd -= dt
-        if self._spawn_cd <= 0 and len(self.bubbles) < 26:
-            self._spawn_cd = random.uniform(0.15, 0.6)
+    def _destroy_panes(self):
+        for p in self.panes:
+            try:
+                if p["hbm"]:
+                    gdi32.SelectObject(p["hdc_mem"], p["old_hbm"])
+                    gdi32.DeleteObject(p["hbm"])
+                gdi32.DeleteDC(p["hdc_mem"])
+                user32.ReleaseDC(0, p["hdc_screen"])
+            except Exception:
+                pass
+            try:
+                p["win"].destroy()
+            except Exception:
+                pass
+        self.panes = []
+
+    # ---------- 每帧更新 ----------
+    def _render_pane(self, p, dt, t):
+        # 生成气泡（每个 pane 独立控制上限，避免多屏时太少）
+        p["_cd"] -= dt
+        if p["_cd"] <= 0 and len(p["bubbles"]) < 18:
+            p["_cd"] = random.uniform(0.15, 0.6)
             r = random.uniform(3, 9)
-            self.bubbles.append({"x": random.uniform(0, self.W),
-                                 "y": self.H + r + 5,
-                                 "r": r, "vy": random.uniform(22, 60),
+            p["bubbles"].append({"x": random.uniform(0, p["W"]),
+                                 "y": p["H"] + r + 5, "r": r,
+                                 "vy": random.uniform(22, 60),
                                  "ph": random.uniform(0, 6.28),
                                  "dr": random.uniform(6, 18)})
-        for b in list(self.bubbles):
+        for b in list(p["bubbles"]):
             b["y"] -= b["vy"] * dt
             b["ph"] += dt * 2.0
             if b["y"] + b["r"] < 0:
-                self.bubbles.remove(b)
-
-        self.img.paste((0, 0, 0, 0), [0, 0, self.W, self.H])
-        t = self.app._decor_t if hasattr(self.app, "_decor_t") else 0.0
+                p["bubbles"].remove(b)
+        p["img"].paste((0, 0, 0, 0), [0, 0, p["W"], p["H"]])
         # 水草：底部向上的柔和竖线，随风摆动
-        for wd in self.weeds:
+        for wd in p["weeds"]:
             base_x = wd["x"]
             pts = []
             seg = 7
             for k in range(seg + 1):
-                fy = self.H - (wd["h"] * k / seg)
+                fy = p["H"] - (wd["h"] * k / seg)
                 sway = math.sin(t * wd["sw"] + wd["ph"] + k * 0.5) * (14 * k / seg)
                 pts.append((base_x + sway, fy))
-            self.draw.line(pts, fill=(70, 170, 130, 120), width=4)
+            p["draw"].line(pts, fill=(70, 170, 130, 120), width=4)
         # 气泡：细边圆 + 顶部高光
-        for b in self.bubbles:
+        for b in p["bubbles"]:
             x, y, r = b["x"] + math.sin(b["ph"]) * b["dr"], b["y"], b["r"]
-            self.draw.ellipse([x - r, y - r, x + r, y + r],
+            p["draw"].ellipse([x - r, y - r, x + r, y + r],
                               outline=(190, 230, 255, 150), width=1)
-            self.draw.ellipse([x - r * 0.45, y - r * 0.55, x - r * 0.05, y - r * 0.15],
+            p["draw"].ellipse([x - r * 0.45, y - r * 0.55, x - r * 0.05, y - r * 0.15],
                               fill=(235, 245, 255, 170))
-        self._push()
+        self._push_pane(p)
+
+    def update(self, dt):
+        # 屏幕联动：选定屏→只该屏；全部屏幕→每个显示器各一个窗口（运行中改选择即时生效）
+        self._rebuild_if_needed()
+        if not getattr(self.app, "decor_enabled", False):
+            if self._active:
+                self._blank()
+            return
+        t = self.app._decor_t if hasattr(self.app, "_decor_t") else 0.0
+        for p in self.panes:
+            self._render_pane(p, dt, t)
         self._active = True
 
     def destroy(self):
-        try:
-            if getattr(self, "hbm", None):
-                gdi32.SelectObject(self.hdc_mem, self.old_hbm)
-                gdi32.DeleteObject(self.hbm)
-            gdi32.DeleteDC(self.hdc_mem)
-            user32.ReleaseDC(0, self.hdc_screen)
-        except Exception:
-            pass
-        try:
-            self.win.destroy()
-        except Exception:
-            pass
+        self._destroy_panes()
 
 
 # ---------------------------------------------------------------- 捕鱼叠加层
