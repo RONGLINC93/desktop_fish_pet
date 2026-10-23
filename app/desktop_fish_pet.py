@@ -1256,6 +1256,172 @@ class FishInfoOverlay:
             pass
 
 
+# ---------------------------------------------------------------- 鱼池概览悬浮窗
+class FishOverviewOverlay:
+    """常驻角落的「鱼池概览」HUD：总数 / 总价值 / 幼崽·成年·进化分布 / 狂暴·饥饿条数。
+    透明分层窗口、置顶、鼠标穿透（不挡小鱼交互），固定在主屏右下角。"""
+
+    W, H = 200, 132
+
+    def __init__(self, app):
+        self.app = app
+        self.cw, self.ch = self.W, self.H
+        self.win = tk.Toplevel(app.root)
+        self.win.overrideredirect(True)
+        self.win.attributes("-topmost", True)
+        self.win.attributes("-disabled", True)  # 不接收鼠标
+        self.win.configure(bg="black")
+        self.win.update_idletasks()
+
+        self.hwnd = user32.GetAncestor(self.win.winfo_id(), GA_ROOT)
+        ex = user32.GetWindowLongPtrW(self.hwnd, GWL_EXSTYLE)
+        ex |= WS_EX_LAYERED | WS_EX_TOOLWINDOW | WS_EX_TRANSPARENT  # 鼠标穿透
+        user32.SetWindowLongPtrW(self.hwnd, GWL_EXSTYLE, ex)
+
+        self.hdc_screen = user32.GetDC(0)
+        self.hdc_mem = gdi32.CreateCompatibleDC(self.hdc_screen)
+        self.hbm = None
+        self.old_hbm = None
+        self.bits = None
+        self._make_dib(self.cw, self.ch)
+        self.img = Image.new("RGBA", (self.cw, self.ch), (0, 0, 0, 0))
+        self.draw = ImageDraw.Draw(self.img)
+        try:
+            self.font = load_cjk_font(14)
+        except Exception:
+            self.font = None
+        self._acc = 0.0          # 重绘节流计时
+        self._last = None        # 上一次统计指纹，避免无变化时重绘
+        self._position()
+        self._draw(force=True)
+
+    def _make_dib(self, w, h):
+        if getattr(self, "hbm", None):
+            gdi32.SelectObject(self.hdc_mem, self.old_hbm)
+            gdi32.DeleteObject(self.hbm)
+        bi = BITMAPINFO()
+        bi.bmiHeader.biSize = ctypes.sizeof(BITMAPINFOHEADER)
+        bi.bmiHeader.biWidth = w
+        bi.bmiHeader.biHeight = -h
+        bi.bmiHeader.biPlanes = 1
+        bi.bmiHeader.biBitCount = 32
+        bi.bmiHeader.biCompression = 0
+        bits = ctypes.c_void_p()
+        self.hbm = gdi32.CreateDIBSection(self.hdc_screen, ctypes.byref(bi), 0,
+                                          ctypes.byref(bits), None, 0)
+        self.bits = bits
+        self.old_hbm = gdi32.SelectObject(self.hdc_mem, self.hbm)
+
+    def _target_work(self):
+        """HUD 所在屏幕的工作区：与鱼的活动范围保持一致。
+        - 鱼固定在某块屏（app.screen >= 0）时，HUD 落在同一屏右下角；
+        - 跨屏（screen == -1）或枚举失败时，落主屏（mons[0]）右下角。
+        """
+        app = self.app
+        sc = getattr(app, "screen", -1)
+        if sc is not None and sc >= 0:
+            r = monitor_work_rect(sc)
+            if r:
+                return r
+        mons = get_monitors()
+        if mons:
+            return mons[0]["work"]
+        return getattr(app, "workarea", (0, 0, 1920, 1080))
+
+    def _position(self):
+        """固定在目标屏（按 app.screen 选择）右下角，留 14px 边距。"""
+        L, T, R, B = self._target_work()
+        x = R - self.cw - 14
+        y = B - self.ch - 14
+        self.win.geometry("%dx%d+%d+%d" % (self.cw, self.ch, x, y))
+        self.win.update_idletasks()
+
+    def _stat(self):
+        app = self.app
+        fishes = app.fishes
+        n = len(fishes)
+        total = 0
+        juvenile = mature = evolved = berserk = hungry = 0
+        for f in fishes:
+            try:
+                total += int(app._fish_info(f)[0])
+            except Exception:
+                pass
+            if getattr(f, "evo_stage", 0) > 0:
+                evolved += 1
+            elif getattr(f, "is_mature", lambda: False)() if callable(getattr(f, "is_mature", None)) else False:
+                mature += 1
+            else:
+                juvenile += 1
+            if getattr(f, "berserk", False):
+                berserk += 1
+            if f.hunger < HUNGER_LOW:
+                hungry += 1
+        return (n, total, juvenile, mature, evolved, berserk, hungry)
+
+    def _shadow_text(self, px, py, text, fill):
+        self.draw.text((px + 1, py + 1), text, fill=(0, 0, 0, 170), font=self.font)
+        self.draw.text((px, py), text, fill=fill, font=self.font)
+
+    def _draw(self, force=False):
+        s = self._stat()
+        if not force and s == self._last:
+            return
+        self._last = s
+        n, total, juvenile, mature, evolved, berserk, hungry = s
+        self.img.paste((0, 0, 0, 0), [0, 0, self.cw, self.ch])
+        # 半透明卡片底（圆角矩形）
+        pad = 8
+        self.draw.rounded_rectangle([pad, pad, self.cw - pad, self.ch - pad],
+                                    radius=12, fill=(10, 25, 50, 200),
+                                    outline=(120, 170, 230, 160))
+        x = pad + 14
+        self._shadow_text(x, 14, "鱼池概览", (255, 220, 120))
+        self._shadow_text(x, 38, "总数 %d 条   总价值 %d" % (n, total), (230, 240, 255))
+        self._shadow_text(x, 62, "幼崽 %d · 成年 %d · 进化 %d"
+                          % (juvenile, mature, evolved), (180, 230, 200))
+        self._shadow_text(x, 86, "狂暴 %d · 饥饿 %d" % (berserk, hungry), (255, 175, 165))
+        self._push()
+
+    def _push(self):
+        r, g, b, a = self.img.split()
+        bgra = Image.merge("RGBA", (b, g, r, a)).tobytes()
+        ctypes.memmove(self.bits, bgra, self.cw * self.ch * 4)
+        blend = BLENDFUNCTION(0, 0, 255, 1)
+        dst = POINT(*self._pos_tuple())
+        sz = SIZE(self.cw, self.ch)
+        src = POINT(0, 0)
+        user32.UpdateLayeredWindow(self.hwnd, self.hdc_screen, ctypes.byref(dst),
+                                   ctypes.byref(sz), self.hdc_mem, ctypes.byref(src),
+                                   0, ctypes.byref(blend), ULW_ALPHA)
+
+    def _pos_tuple(self):
+        L, T, R, B = self._target_work()
+        return (R - self.cw - 14, B - self.ch - 14)
+
+    def update(self, dt):
+        self._acc += dt
+        if self._acc < 0.5:
+            return
+        self._acc = 0.0
+        self._position()
+        self._draw()
+
+    def destroy(self):
+        try:
+            if getattr(self, "hbm", None):
+                gdi32.SelectObject(self.hdc_mem, self.old_hbm)
+                gdi32.DeleteObject(self.hbm)
+            gdi32.DeleteDC(self.hdc_mem)
+            user32.ReleaseDC(0, self.hdc_screen)
+        except Exception:
+            pass
+        try:
+            self.win.destroy()
+        except Exception:
+            pass
+
+
 # ---------------------------------------------------------------- 浮动文字浮层
 class FloaterOverlay:
     """普通模式下渲染浮动文字（如「繁殖了N条小鱼!」）：一张覆盖虚拟桌面的
@@ -2921,6 +3087,7 @@ class App:
         self.fishing_overlay = None
         self.goldminer = False
         self.goldminer_overlay = None
+        self.overview_overlay = None  # 鱼池概览悬浮窗（enabled 时主循环懒创建）
         self.coins = 1000
         self.cannon_level = 1
         self.cannon_index = 0
@@ -2942,6 +3109,9 @@ class App:
         self.decor_enabled = False   # 气泡/水草装饰层开关；load_config 可能覆盖
         self.decor_mode = "both"     # 装饰内容："both"=气泡+水草 / "bubbles"=仅气泡 / "weeds"=仅水草；load_config 可能覆盖
         self.daynight_enabled = True # 昼夜行为开关；load_config 可能覆盖
+        self.auto_feed = False       # 自动喂食：饱食度低于阈值时自动补食；load_config 可能覆盖
+        self.auto_feed_threshold = 0.3  # 自动喂食阈值（0~1）；load_config 可能覆盖
+        self.overview_enabled = False   # 鱼池概览悬浮窗；load_config 可能覆盖
         self.bait_index = 0          # 钓鱼鱼饵索引（BAITS）；load_config 可能覆盖
         self.dex = {}                # 图鉴：品种目录名 -> {"count": 累计出现, "best": 最高等级}
         self.hotkeys = {}            # 自定义快捷键：动作名 -> "ctrl+alt+x"
@@ -3010,6 +3180,9 @@ class App:
                 "escape": self.escape_enabled,
                 "decor": self.decor_enabled, "decor_mode": self.decor_mode,
                 "daynight": self.daynight_enabled,
+                "auto_feed": self.auto_feed,
+                "auto_feed_threshold": self.auto_feed_threshold,
+                "overview": self.overview_enabled,
                 "bait": self.bait_index, "dex": self.dex,
                 "hotkeys": self.hotkeys, "profiles": self.profiles,
                 "max_fish": self.max_fish}
@@ -3093,6 +3266,10 @@ class App:
         if self.decor_mode not in ("bubbles", "weeds", "both"):
             self.decor_mode = "both"
         self.daynight_enabled = bool(data.get("daynight", True))
+        self.auto_feed = bool(data.get("auto_feed", False))
+        t = float(data.get("auto_feed_threshold", 0.3))
+        self.auto_feed_threshold = max(0.0, min(1.0, t))
+        self.overview_enabled = bool(data.get("overview", False))
         if isinstance(data.get("bait"), (int, float)):
             self.bait_index = max(0, min(len(BAITS) - 1, int(data["bait"])))
         if isinstance(data.get("dex"), dict):
@@ -3121,6 +3298,16 @@ class App:
         if not self.paused and not self.hidden:
             for f in self.fishes:
                 f.tick(dt)
+            # 自动喂食：饱食度低于阈值的鱼静默补食，统一只响一声，避免逐条叠音
+            if self.auto_feed and self.fishes:
+                fed = False
+                for f in list(self.fishes):
+                    if f.hunger < self.auto_feed_threshold:
+                        f.feed(play_sound=False)
+                        fed = True
+                if fed:
+                    self.sounds.play("poke")
+                    self.save_config()
         if self.fishing and self.fishing_overlay is not None:
             self.fishing_overlay.tick(dt)
             if not self.fishes:  # 鱼被抓光了，自动补几条继续玩（按买价扣费，静默）
@@ -3148,6 +3335,14 @@ class App:
         self._decor_t += dt
         if self.decor is not None:
             self.decor.update(dt)                       # 气泡/水草装饰层（开关关闭时自动清屏）
+        # 鱼池概览悬浮窗：按开关懒创建/销毁（运行中切换即时生效）
+        if self.overview_enabled:
+            if self.overview_overlay is None:
+                self.overview_overlay = FishOverviewOverlay(self)
+            self.overview_overlay.update(dt)
+        elif self.overview_overlay is not None:
+            self.overview_overlay.destroy()
+            self.overview_overlay = None
         self._save_ticks += 1
         if self._save_ticks >= 180:  # 约每 6 秒自动存一次位置
             self._save_ticks = 0
@@ -3169,7 +3364,11 @@ class App:
                 TrayItem("放一条小鱼", lambda icon, item: self._invoke(self.add_fish)),
                 TrayItem("随机放几条鱼", lambda icon, item: self._invoke(self.add_fish_random)),
                 TrayItem("喂食所有小鱼", lambda icon, item: self._invoke(self._feed_all)),
+                TrayItem("自动喂食", lambda icon, item: self._invoke(self.toggle_auto_feed),
+                         checked=lambda item: self.auto_feed),
             )),
+            TrayItem("鱼池概览", lambda icon, item: self._invoke(self.toggle_overview),
+                     checked=lambda item: self.overview_enabled),
             TrayItem("捕鱼模式", lambda icon, item: self._invoke(self.toggle_fishing),
                      checked=lambda item: self.fishing),
             TrayItem("钓鱼模式", lambda icon, item: self._invoke(self.toggle_goldminer),
@@ -3560,6 +3759,21 @@ class App:
         if m not in ("both", "bubbles", "weeds"):
             return
         self.decor_mode = m
+        self.save_config()
+        self._update_tray_safe()
+
+    def toggle_auto_feed(self):
+        self.auto_feed = not self.auto_feed
+        self.save_config()
+        self._update_tray_safe()
+
+    def set_auto_feed_threshold(self, v):
+        """设置自动喂食阈值（0~1，钳制）。"""
+        self.auto_feed_threshold = max(0.0, min(1.0, float(v)))
+        self.save_config()
+
+    def toggle_overview(self):
+        self.overview_enabled = not self.overview_enabled
         self.save_config()
         self._update_tray_safe()
 
@@ -4505,6 +4719,10 @@ class SettingsAPI:
             "decor_enabled": app.decor_enabled,
             "decor_mode": app.decor_mode,
             "daynight_enabled": app.daynight_enabled,
+            "auto_feed": app.auto_feed,
+            "auto_feed_threshold": app.auto_feed_threshold,
+            "overview_enabled": app.overview_enabled,
+            "pond_overview": self._pond_overview(),
             "is_night": app.is_night(),
             "bait": app.bait_index,
             "baits": [b[0] for b in BAITS],
@@ -4514,6 +4732,31 @@ class SettingsAPI:
             "hotkeys": dict(app.hotkeys),
             "hotkey_actions": dict(App.HOTKEY_ACTIONS),
         }
+
+    def _pond_overview(self):
+        app = self.app
+        fishes = app.fishes
+        n = len(fishes)
+        total = 0
+        juvenile = mature = evolved = berserk = hungry = 0
+        for f in fishes:
+            try:
+                total += int(app._fish_info(f)[0])
+            except Exception:
+                pass
+            if getattr(f, "evo_stage", 0) > 0:
+                evolved += 1
+            elif getattr(f, "is_mature", None) and f.is_mature():
+                mature += 1
+            else:
+                juvenile += 1
+            if getattr(f, "berserk", False):
+                berserk += 1
+            if f.hunger < HUNGER_LOW:
+                hungry += 1
+        return {"count": n, "total_value": total, "juvenile": juvenile,
+                "mature": mature, "evolved": evolved, "berserk": berserk,
+                "hungry": hungry}
 
     # ---------- 写操作 ----------
     def _toggle(self, name):
@@ -4604,6 +4847,19 @@ class SettingsAPI:
 
     def toggle_daynight(self):
         return self._run_on_main(lambda: self._toggle("toggle_daynight"))
+
+    def toggle_auto_feed(self):
+        return self._run_on_main(lambda: self._toggle("toggle_auto_feed"))
+
+    def set_auto_feed_threshold(self, v):
+        def _t():
+            self.app.set_auto_feed_threshold(float(v))
+            return {"ok": True,
+                    "msg": "自动喂食阈值 %d%%" % round(self.app.auto_feed_threshold * 100)}
+        return self._run_on_main(_t)
+
+    def toggle_overview(self):
+        return self._run_on_main(lambda: self._toggle("toggle_overview"))
 
     def set_bait(self, idx):
         def _t():

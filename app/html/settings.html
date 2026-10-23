@@ -100,6 +100,9 @@
       <button class="btn" onclick="doAddRandom()">随机放几条鱼</button>
       <button class="btn" onclick="doFeedAll()">喂食所有小鱼</button>
     </div>
+    <div class="box"><h3>鱼池概览</h3>
+      <div id="pondOverview" class="hint" style="line-height:1.7;"></div>
+    </div>
     <div class="box"><h3>钓鱼增强 · 鱼饵</h3>
       <div class="hint" style="margin-bottom:8px;">鱼饵影响钓鱼挣脱概率与收益：稀有鱼饵更稳、收益更高，每次放钩消耗 <b id="baitCost"></b> 金币；连续不失手有连击奖励。</div>
       <div class="chips" id="baits"></div>
@@ -143,6 +146,8 @@
     {key:'mouse_penetration', label:'鼠标穿透', api:'toggle_mouse_penetration'},
     {key:'berserk_enabled',label:'狂暴模式', api:'toggle_berserk'},
     {key:'decor_enabled',  label:'气泡装饰', api:'toggle_decor'},
+    {key:'auto_feed',      label:'自动喂食', api:'toggle_auto_feed'},
+    {key:'overview_enabled',label:'鱼池概览', api:'toggle_overview'},
     {key:'daynight_enabled',label:'昼夜节律', api:'toggle_daynight'},
   ];
 
@@ -290,6 +295,46 @@
     return box;
   }
 
+  // 自动喂食二级设置行：阈值（低于此饱食度自动补食），缩进挂在「自动喂食」开关下
+  function buildAutoFeedRow(){
+    const box = document.createElement('div');
+    box.style.cssText = 'margin:0 10px 8px;padding:8px 10px;background:#f8fbff;' +
+      'border-left:3px solid #e3ebf9;border-radius:0 10px 10px 0;';
+    const head = document.createElement('div');
+    head.style.cssText = 'display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;margin-bottom:6px;';
+    const t = document.createElement('span');
+    t.style.cssText = 'font-weight:600;font-size:13px;';
+    t.textContent = '└ 喂食阈值';
+    const h = document.createElement('span');
+    h.style.cssText = 'font-size:12px;color:#5b7099;';
+    h.textContent = DATA.auto_feed ? '饱食度低于此值自动补食（静默，不逐条响）' : '开启自动喂食后生效';
+    head.appendChild(t); head.appendChild(h);
+    box.appendChild(head);
+    const row = document.createElement('div');
+    row.style.cssText = 'display:flex;gap:8px;align-items:center;';
+    const inp = document.createElement('input');
+    inp.type = 'number'; inp.min = '0'; inp.max = '100'; inp.step = '5';
+    inp.value = Math.round((DATA.auto_feed_threshold != null ? DATA.auto_feed_threshold : 0.3) * 100);
+    inp.placeholder = '0~100';
+    inp.style.cssText = 'width:72px;padding:6px 8px;border-radius:8px;border:1px solid #cdd8ee;';
+    const btn = document.createElement('button');
+    btn.className = 'btn';
+    btn.textContent = '应用';
+    btn.onclick = () => {
+      let p = parseFloat(inp.value);
+      if (isNaN(p)) { toast('请输入 0~100 的数字'); return; }
+      p = Math.max(0, Math.min(100, p));
+      callApi('set_auto_feed_threshold', p / 100);
+    };
+    inp.addEventListener('keydown', e => { if (e.key === 'Enter') btn.onclick(); });
+    const hint = document.createElement('span');
+    hint.className = 'hint';
+    hint.textContent = '（%，默认 30）';
+    row.appendChild(inp); row.appendChild(btn); row.appendChild(hint);
+    box.appendChild(row);
+    return box;
+  }
+
   function renderSoundBox(){
     const vol = Math.round((DATA.sound_volume != null ? DATA.sound_volume : 1) * 100);
     const slider = document.getElementById('vol');
@@ -308,6 +353,15 @@
 
   function doVolLive(v){ document.getElementById('volVal').textContent = v + '%'; }
   async function doVolCommit(v){ await callApi('set_sound_volume', parseInt(v, 10) / 100); }
+
+  function renderPondOverview(){
+    const o = DATA.pond_overview || {count:0, total_value:0, juvenile:0, mature:0,
+                                     evolved:0, berserk:0, hungry:0};
+    document.getElementById('pondOverview').innerHTML =
+      '总数 <b>' + o.count + '</b> 条 ·  总价值 <b>' + o.total_value + '</b><br>' +
+      '幼崽 ' + o.juvenile + ' · 成年 ' + o.mature + ' · 进化 ' + o.evolved + '<br>' +
+      '狂暴 <b style="color:#e0524d">' + o.berserk + '</b> ·  饥饿 <b style="color:#f2994a">' + o.hungry + '</b>';
+  }
 
   function render(){
     if (!DATA) return;
@@ -331,6 +385,8 @@
       if (s.key === 'goldminer') sw.appendChild(buildEscapeMinRow());
       // 气泡装饰的二级设置：显示内容（气泡/水草/都开），紧跟「气泡装饰」开关之下
       if (s.key === 'decor_enabled') sw.appendChild(buildDecorModeRow());
+      // 自动喂食的二级设置：阈值（低于此饱食度自动补食），紧跟「自动喂食」开关之下
+      if (s.key === 'auto_feed') sw.appendChild(buildAutoFeedRow());
     });
     // 屏幕选择
     const sc = document.getElementById('screens');
@@ -359,6 +415,7 @@
       ba.appendChild(b);
     });
     renderSoundBox();
+    renderPondOverview();
     renderDex();
     renderProfiles();
     renderHotkeys();
