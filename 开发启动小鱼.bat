@@ -1,11 +1,11 @@
 @echo off
 setlocal
 cd /d "%~dp0"
-echo [å¼€å‘æ¨¡å¼] å¯åŠ¨æ¡Œé¢å°é±¼ï¼ˆæ¥è‡ª app/ï¼Œæ˜¾ç¤ºæ§åˆ¶å°è¾“å‡ºä¾¿äºè°ƒè¯•ï¼‰
-echo æ­£åœ¨æ£€æŸ¥å¹¶å®‰è£…ä¾èµ–ï¼ˆapp/support/requirements.txtï¼‰...
+echo [¿ª·¢Ä£Ê½] Æô¶¯×ÀÃæĞ¡Óã£¨À´×Ô app/£¬ÏÔÊ¾¿ØÖÆÌ¨Êä³ö±ãÓÚµ÷ÊÔ£©
+echo ÕıÔÚ¼ì²é²¢°²×°ÒÀÀµ£¨app/support/requirements.txt£©...
 python -m pip install -q -r app/support/requirements.txt
 if %errorlevel% neq 0 (
-  echo [è­¦å‘Š] ä¾èµ–å®‰è£…å¤±è´¥ï¼Œå°è¯•æ™®é€šæ–¹å¼...
+  echo [¾¯¸æ] ÒÀÀµ°²×°Ê§°Ü£¬³¢ÊÔÆÕÍ¨·½Ê½...
   pip install -r app/support/requirements.txt
 )
 cd app

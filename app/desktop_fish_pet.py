@@ -562,8 +562,8 @@ class SoundManager:
 
 
 # ---------------------------------------------------------------- 信息卡绘制
-INFO_CARD_W = 212
-INFO_CARD_H = 126
+INFO_CARD_W = 248
+INFO_CARD_H = 148
 INFO_CARD_LINGER = 2.0  # 鼠标离开鱼后，信息卡继续跟随鱼显示的秒数（鱼在游动，便于看清）
 
 
@@ -614,22 +614,31 @@ def draw_fish_info_card(img, draw, fish, x, y, font):
         return bb[2] - bb[0]
 
     # 第一行：名字（白，玩家命名优先）+ 等级（青）+ 成年（金）/ 进化（紫）/ 狂暴（红）
+    # 名字过长时截断加省略号，保证后面的等级/标记不被挤出卡片
     tx = x + 18
     name = fish.display_name() if hasattr(fish, "display_name") \
         else getattr(fish, "name", "")
+    lv_text = "Lv%d" % fish.level
+    tags = []
+    if getattr(fish, "is_mature", None) and fish.is_mature():
+        tags.append(("成年", (255, 205, 90)))
+    if getattr(fish, "evo_stage", 0) > 0:
+        tags.append(("进化×%d" % fish.evo_stage, (195, 150, 255)))
+    if berserk:
+        tags.append(("狂暴", (255, 110, 100)))
+    fixed_w = _tw(lv_text) + 6 + sum(_tw(t) + 6 for t, _ in tags)
+    avail = cw - 18 - 8 - fixed_w - 7
+    if _tw(name) > avail:
+        while name and _tw(name + "…") > avail:
+            name = name[:-1]
+        name += "…"
     _shadow_text(tx, y + 8, name, (240, 245, 255))
     tx += _tw(name) + 7
-    _shadow_text(tx, y + 8, "Lv%d" % fish.level, (130, 220, 255))
-    tx += _tw("Lv%d" % fish.level) + 6
-    if getattr(fish, "is_mature", None) and fish.is_mature():
-        _shadow_text(tx, y + 8, "成年", (255, 205, 90))
-        tx += _tw("成年") + 6
-    if getattr(fish, "evo_stage", 0) > 0:
-        _et = "进化×%d" % fish.evo_stage
-        _shadow_text(tx, y + 8, _et, (195, 150, 255))
-        tx += _tw(_et) + 6
-    if berserk:
-        _shadow_text(tx, y + 8, "狂暴", (255, 110, 100))
+    _shadow_text(tx, y + 8, lv_text, (130, 220, 255))
+    tx += _tw(lv_text) + 6
+    for t, col in tags:
+        _shadow_text(tx, y + 8, t, col)
+        tx += _tw(t) + 6
 
     # 圆角进度条
     bx, bw, bh = x + 52, cw - 52 - 16, 8
@@ -654,21 +663,21 @@ def draw_fish_info_card(img, draw, fish, x, y, font):
 
     # 成长（带百分比，文字居中在进度条上）
     growth = getattr(fish, "growth", 0.0)
-    _shadow_text(x + 18, y + 30, "成长", (185, 215, 255))
-    _bar(y + 31, growth, (115, 220, 145))
-    _center("%d%%" % int(growth * 100), y + 30, (200, 255, 210))
+    _shadow_text(x + 18, y + 32, "成长", (185, 215, 255))
+    _bar(y + 33, growth, (115, 220, 145))
+    _center("%d%%" % int(growth * 100), y + 32, (200, 255, 210))
 
     # HP（带数值，文字居中在进度条上）
     hp = getattr(fish, "hp", 1)
     maxhp = getattr(fish, "max_hp", 1)
     hpr = hp / max(1, maxhp)
-    _shadow_text(x + 18, y + 50, "HP", (255, 160, 150))
-    _bar(y + 51, hpr, (235, 85, 75))
-    _center("%d/%d" % (int(hp), int(maxhp)), y + 50, (255, 200, 190))
+    _shadow_text(x + 18, y + 54, "HP", (255, 160, 150))
+    _bar(y + 55, hpr, (235, 85, 75))
+    _center("%d/%d" % (int(hp), int(maxhp)), y + 54, (255, 200, 190))
 
     # 繁衍倒计时（仅成年鱼有意义，文字居中在进度条上）
     mature = getattr(fish, "is_mature", None) and fish.is_mature()
-    by_breed = y + 70
+    by_breed = y + 78
     if mature:
         bt = getattr(fish, "breed_timer", BREED_COOLDOWN)
         ratio = max(0.0, min(1.0, 1.0 - bt / BREED_COOLDOWN))
@@ -687,9 +696,9 @@ def draw_fish_info_card(img, draw, fish, x, y, font):
         _mood, _ = fish.mood()
     except Exception:
         _mood = "平静"
-    _shadow_text(x + 18, y + 90, "好感 %d" % aff, (255, 170, 210))
-    _shadow_text(x + 92, y + 90, "饱食 %d%%" % hun, (160, 230, 200))
-    _right(_mood, y + 90, (220, 225, 255))
+    _shadow_text(x + 18, y + 100, "好感 %d" % aff, (255, 170, 210))
+    _shadow_text(x + 100, y + 100, "饱食 %d%%" % hun, (160, 230, 200))
+    _right(_mood, y + 100, (220, 225, 255))
 
     # 底部：价值（左）+ 速度（右）
     try:
@@ -697,8 +706,8 @@ def draw_fish_info_card(img, draw, fish, x, y, font):
     except Exception:
         value = 0
     speed = int(getattr(fish, "base_speed", 0))
-    _shadow_text(x + 18, y + 110, "价值 %d" % value, (255, 220, 120))
-    _right("速度 %d" % speed, y + 110, (160, 220, 255))
+    _shadow_text(x + 18, y + 122, "价值 %d" % value, (255, 220, 120))
+    _right("速度 %d" % speed, y + 122, (160, 220, 255))
 
     return cw, ch
 
